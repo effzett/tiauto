@@ -125,6 +125,8 @@ def build():
         '--hidden-import', 'numpy',
         # src-Paket mitliefern
         '--add-data', f'src{sep}src',
+        # Dokumentation (PDF) mitliefern
+        '--add-data', f'toleranzintervalle.pdf{sep}.',
     ]
 
     # Plattform-spezifische Optionen

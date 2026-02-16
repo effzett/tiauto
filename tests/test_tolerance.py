@@ -148,12 +148,13 @@ class TestWeibullTI:
 
 
 class TestAutoDecision:
-    """Automatische Methodenwahl."""
+    """Automatische Methodenwahl (parametrisch zuerst)."""
 
-    def test_large_n_uses_distribution_free(self):
+    def test_normal_data_uses_normal(self):
+        """Normalverteilte Daten → Normal-TI, auch bei großem n."""
         data = np.random.default_rng(42).normal(0, 1, size=100)
         result = auto_tolerance_interval(data, verbose=False)
-        assert 'Verteilungsfrei' in result.method
+        assert 'Normal' in result.method
 
     def test_small_n_normal_uses_normal(self):
         data = np.random.default_rng(42).normal(100, 10, size=20)
@@ -166,7 +167,16 @@ class TestAutoDecision:
         result = auto_tolerance_interval(data, verbose=False)
         assert 'Lognormal' in result.method
 
-    def test_bimodal_falls_back(self):
+    def test_bimodal_large_n_uses_distribution_free(self):
+        """Bimodale Daten mit genug n → verteilungsfrei (kein Fallback)."""
+        rng = np.random.default_rng(42)
+        data = np.concatenate([rng.normal(10, 1, 50), rng.normal(30, 1, 50)])
+        result = auto_tolerance_interval(data, p=0.90, confidence=0.90,
+                                         verbose=False)
+        assert 'Verteilungsfrei' in result.method
+
+    def test_bimodal_small_n_falls_back(self):
+        """Bimodale Daten mit wenig n → Fallback."""
         rng = np.random.default_rng(42)
         data = np.concatenate([rng.normal(10, 1, 8), rng.normal(30, 1, 7)])
         result = auto_tolerance_interval(data, verbose=False)

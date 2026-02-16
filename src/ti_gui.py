@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QMessageBox, QStatusBar, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QSizePolicy,
 )
-from PySide6.QtCore import Qt, QLocale
-from PySide6.QtGui import QFont, QAction, QKeySequence
+from PySide6.QtCore import Qt, QLocale, QUrl
+from PySide6.QtGui import QFont, QAction, QKeySequence, QDesktopServices
 
 # Toleranzintervall-Logik importieren
 from src.tolerance_intervals import (
@@ -33,7 +33,7 @@ from src.tolerance_intervals import (
 class ToleranceIntervalApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Toleranzintervall-Rechner")
+        self.setWindowTitle("Toleranzintervall-Rechner v1.1.0")
         self.setMinimumSize(900, 700)
         self.setup_ui()
         self.setup_menu()
@@ -68,6 +68,12 @@ class ToleranceIntervalApp(QMainWindow):
         table_action = QAction("&Mindeststichprobengrößen", self)
         table_action.triggered.connect(self.show_min_n_table)
         help_menu.addAction(table_action)
+
+        doc_action = QAction("&Dokumentation (PDF)...", self)
+        doc_action.triggered.connect(self.open_documentation)
+        help_menu.addAction(doc_action)
+
+        help_menu.addSeparator()
 
         about_action = QAction("&Über...", self)
         about_action.triggered.connect(self.show_about)
@@ -137,10 +143,10 @@ class ToleranceIntervalApp(QMainWindow):
         row = 0
         param_layout.addWidget(QLabel("Abdeckung (p):"), row, 0)
         self.p_spin = QDoubleSpinBox()
-        self.p_spin.setRange(0.50, 0.999)
+        self.p_spin.setRange(0.01, 0.999)
         self.p_spin.setSingleStep(0.01)
         self.p_spin.setDecimals(3)
-        self.p_spin.setValue(0.95)
+        self.p_spin.setValue(0.90)
         self.p_spin.setToolTip("Mindestanteil der Population, den das Intervall abdecken soll")
         param_layout.addWidget(self.p_spin, row, 1)
 
@@ -260,8 +266,8 @@ class ToleranceIntervalApp(QMainWindow):
             min_n = min_n_distribution_free(p, conf, side)
             side_text = "zweiseitig" if side == 'two-sided' else "einseitig"
             self.min_n_label.setText(
-                f"ℹ Verteilungsfrei benötigt\n"
-                f"  min. n = {min_n} ({side_text})\n"
+                f"ℹ Verteilungsfrei (Fallback)\n"
+                f"  benötigt min. n = {min_n} ({side_text})\n"
                 f"  für p={p:.3f}, conf={conf:.3f}"
             )
         except Exception:
@@ -409,6 +415,28 @@ class ToleranceIntervalApp(QMainWindow):
         self.data_input.setPlainText(example)
         self.statusBar().showMessage("Beispieldaten geladen.", 3000)
 
+    def open_documentation(self):
+        """Öffnet das PDF-Paper im Standard-PDF-Viewer."""
+        # Suche PDF: neben der App, im src-Ordner, oder im PyInstaller-Bundle
+        candidates = [
+            Path(__file__).parent / 'toleranzintervalle.pdf',
+            Path(__file__).parent.parent / 'toleranzintervalle.pdf',
+        ]
+        # PyInstaller-Bundle
+        if hasattr(sys, '_MEIPASS'):
+            candidates.insert(0, Path(sys._MEIPASS) / 'toleranzintervalle.pdf')
+
+        for pdf_path in candidates:
+            if pdf_path.exists():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(pdf_path.resolve())))
+                return
+
+        QMessageBox.warning(
+            self, "Datei nicht gefunden",
+            "Die Dokumentation (toleranzintervalle.pdf) wurde nicht gefunden.\n\n"
+            "Bitte legen Sie die Datei neben die Anwendung."
+        )
+
     def show_min_n_table(self):
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -430,15 +458,15 @@ class ToleranceIntervalApp(QMainWindow):
             "<h3>Toleranzintervall-Rechner</h3>"
             "<p>Automatische Berechnung von Toleranzintervallen "
             "mit intelligenter Methodenwahl.</p>"
-            "<p><b>Entscheidungslogik:</b></p>"
+            "<p><b>Entscheidungslogik (parametrisch zuerst):</b></p>"
             "<ol>"
-            "<li>n ausreichend → Verteilungsfrei (Ordnungsstatistiken)</li>"
             "<li>Shapiro-Wilk OK → Normal (k-Faktor)</li>"
             "<li>Shapiro-Wilk auf log(x) OK → Lognormal</li>"
             "<li>Weibull-GoF OK → Weibull (parametr. Bootstrap)</li>"
+            "<li>n ausreichend → Verteilungsfrei (Ordnungsstatistiken)</li>"
             "<li>Sonst → Normal als Fallback (mit Warnung)</li>"
             "</ol>"
-            "<p><i>Frank / Claude – 2025</i></p>"
+            "<p><i>Frank Zimmermann – 2026</i></p>"
         )
 
 

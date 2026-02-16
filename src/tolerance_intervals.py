@@ -2,12 +2,17 @@
 """
 Automatisierte Berechnung von Toleranzintervallen.
 
-Entscheidungslogik:
-1. Reicht n für verteilungsfreies TI? → verteilungsfrei (Order Statistics)
-2. Sonst: Shapiro-Wilk auf Normalität → Normal-TI (k-Faktor)
-3. Sonst: Shapiro-Wilk auf log(x) → Lognormal-TI
-3b. Sonst: Weibull-GoF (Monte-Carlo-KS) → Weibull-TI (parametr. Bootstrap)
-4. Sonst: Warnung + Normal-TI als Fallback
+Entscheidungslogik (parametrisch zuerst):
+1. Shapiro-Wilk auf Normalität → Normal-TI (k-Faktor)
+2. Daten > 0 und Shapiro-Wilk auf log(x) → Lognormal-TI
+3. Daten > 0 und Weibull-GoF (Monte-Carlo-KS) → Weibull-TI (parametr. Bootstrap)
+4. n ausreichend für verteilungsfrei? → verteilungsfrei (Order Statistics)
+5. Sonst: Warnung + Normal-TI als Fallback
+
+Begründung: Das verteilungsfreie Verfahren kann bei n ≈ n_min nur die
+Extremwerte verwenden und liefert die schwächste Aussage. Parametrische
+Verfahren nutzen alle n Datenpunkte und sind daher informativer –
+besonders bei kleinem n.
 
 Autor: Frank / Claude
 """
@@ -481,12 +486,19 @@ def auto_tolerance_interval(
     """
     Automatische Berechnung eines Toleranzintervalls.
 
-    Entscheidungslogik:
-    1. n >= min_n für verteilungsfrei? → verteilungsfrei
-    2. Shapiro-Wilk p >= alpha auf Rohdaten? → Normal-TI
-    3. Daten > 0 und Shapiro-Wilk p >= alpha auf log(Daten)? → Lognormal-TI
-    3b. Daten > 0 und Weibull-GoF p >= alpha? → Weibull-TI (Bootstrap)
-    4. Sonst → Normal-TI mit Warnung (Fallback)
+    Entscheidungslogik (parametrisch zuerst):
+    1. Shapiro-Wilk p >= alpha auf Rohdaten? → Normal-TI
+    2. Daten > 0 und Shapiro-Wilk p >= alpha auf log(Daten)? → Lognormal-TI
+    3. Daten > 0 und Weibull-GoF p >= alpha? → Weibull-TI (Bootstrap)
+    4. n >= n_min für verteilungsfrei? → verteilungsfrei (Ordnungsstatistiken)
+    5. Sonst → Normal-TI mit Warnung (Fallback)
+
+    Begründung: Parametrische Verfahren nutzen alle n Datenpunkte und
+    liefern engere Intervalle als das verteilungsfreie Verfahren, das
+    bei n ≈ n_min nur die Extremwerte verwenden kann. Verteilungsfrei
+    kommt erst zum Zug, wenn keine Verteilung passt UND genug Daten
+    vorhanden sind, damit die Fensteroptimierung innere
+    Ordnungsstatistiken wählen kann.
 
     Parameters
     ----------
@@ -526,19 +538,7 @@ def auto_tolerance_interval(
         print(f"  n={n}, p={p}, confidence={confidence}, side={side}")
         print(f"{'='*60}")
 
-    # ── Schritt 1: Verteilungsfrei möglich? ──
-    log(f"Verteilungsfrei benötigt min. n={min_n}, vorhanden n={n}")
-
-    if n >= min_n:
-        log(f"✓ Genug Daten → verteilungsfreies Verfahren")
-        result = distribution_free_ti(data, p, confidence, side)
-        if verbose:
-            print(f"\n{result}")
-        return result
-
-    log(f"✗ Nicht genug Daten für verteilungsfreies Verfahren")
-
-    # ── Schritt 2: Normalverteilung? ──
+    # ── Schritt 1: Normalverteilung? ──
     if n >= 3:
         sw_stat, sw_p = stats.shapiro(data)
         log(f"Shapiro-Wilk auf Rohdaten: W={sw_stat:.4f}, p={sw_p:.4f}")
@@ -554,7 +554,7 @@ def auto_tolerance_interval(
     else:
         log(f"n < 3, Shapiro-Wilk nicht möglich")
 
-    # ── Schritt 3: Lognormalverteilung? ──
+    # ── Schritt 2: Lognormalverteilung? ──
     if np.all(data > 0) and n >= 3:
         sw_stat_log, sw_p_log = stats.shapiro(np.log(data))
         log(f"Shapiro-Wilk auf log(Daten): W={sw_stat_log:.4f}, p={sw_p_log:.4f}")
@@ -568,7 +568,7 @@ def auto_tolerance_interval(
 
         log(f"✗ Lognormalverteilung abgelehnt (p={sw_p_log:.4f} < {alpha_shapiro})")
 
-    # ── Schritt 3b: Weibull-Verteilung? ──
+    # ── Schritt 3: Weibull-Verteilung? ──
     if np.all(data > 0) and n >= 5:
         log(f"Teste Weibull-Anpassung (Monte-Carlo-KS-Test)...")
         wb_c, wb_scale, wb_ks, wb_p = weibull_gof(data, alpha_shapiro)
@@ -590,7 +590,19 @@ def auto_tolerance_interval(
         else:
             log(f"✗ Weibull-Fit fehlgeschlagen")
 
-    # ── Schritt 4: Fallback → Normal mit Warnung ──
+    # ── Schritt 4: Verteilungsfrei möglich? ──
+    log(f"Verteilungsfrei benötigt min. n={min_n}, vorhanden n={n}")
+
+    if n >= min_n:
+        log(f"✓ Genug Daten für verteilungsfreies Verfahren")
+        result = distribution_free_ti(data, p, confidence, side)
+        if verbose:
+            print(f"\n{result}")
+        return result
+
+    log(f"✗ Nicht genug Daten für verteilungsfreies Verfahren (n={n} < {min_n})")
+
+    # ── Schritt 5: Fallback → Normal mit Warnung ──
     log(f"⚠ WARNUNG: Keine Verteilung passt gut. Verwende Normal-TI als Fallback.")
     log(f"  Ergebnis mit Vorsicht interpretieren! Ggf. mehr Daten sammeln.")
 

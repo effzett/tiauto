@@ -1,0 +1,1847 @@
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+% ── Pakete ────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage{lmodern}
+\usepackage[left=18mm,right=18mm,top=22mm,bottom=25mm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage[ruled,vlined,linesnumbered,german]{algorithm2e}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{cleveref}
+
+% ── Farben ────────────────────────────────────────────────────
+\definecolor{darkblue}{RGB}{0,51,102}
+\definecolor{noteblue}{RGB}{230,240,255}
+\definecolor{warnred}{RGB}{255,235,235}
+
+% ── Hyperref ──────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    citecolor=darkblue,
+    urlcolor=darkblue,
+}
+
+% ── Seitenlayout ──────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{Toleranzintervalle -- Theorie und Implementierung}}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Abschnittsformatierung ────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{darkblue}}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{darkblue}}{\thesubsection}{1em}{}
+
+% ── Theorem-Umgebungen ────────────────────────────────────────
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{satz}[definition]{Satz}
+\newtheorem{bemerkung}[definition]{Bemerkung}
+
+% ── Hinweis-Boxen ─────────────────────────────────────────────
+\newcommand{\hinweis}[1]{%
+    \begin{center}
+    \colorbox{noteblue}{\parbox{0.92\linewidth}{\small\textbf{Hinweis:} #1}}
+    \end{center}
+}
+\newcommand{\warnung}[1]{%
+    \begin{center}
+    \colorbox{warnred}{\parbox{0.92\linewidth}{\small\textbf{Warnung:} #1}}
+    \end{center}
+}
+
+% ── Abkürzungen ───────────────────────────────────────────────
+\newcommand{\TI}{Toleranzintervall}
+\newcommand{\KI}{Konfidenzintervall}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\xbar}{\bar{x}}
+
+% ══════════════════════════════════════════════════════════════
+\begin{document}
+% ══════════════════════════════════════════════════════════════
+
+\twocolumn[{%
+\begin{center}
+    {\LARGE\bfseries\color{darkblue}
+    Toleranzintervalle:\\[3pt]
+    Theorie, Verfahren und automatisierte Berechnung}\\[12pt]
+    {\large Frank Zimmermann \quad\textbar\quad Technische Dokumentation}\\[6pt]
+    {\normalsize Februar 2026}\\[4pt]
+    \rule{0.6\textwidth}{0.5pt}
+\end{center}
+\vspace{6mm}
+
+\begin{center}
+\parbox{0.92\textwidth}{\small\textbf{Zusammenfassung.}
+Dieses Dokument beschreibt die mathematischen Grundlagen und die
+softwaretechnische Implementierung eines automatisierten
+Toleranzintervall-Rechners. Ausgehend von der Abgrenzung zu
+Konfidenzintervallen und Prädiktionsintervallen werden vier Verfahren
+entwickelt: verteilungsfrei (Ordnungsstatistiken), normalverteilt
+($k$-Faktor), lognormalverteilt (Transformation) und
+Weibull-basiert (parametrischer Bootstrap). Für das verteilungsfreie
+Verfahren wird eine Optimierung vorgestellt, die durch Verschieben
+eines gleitenden Fensters über die Ordnungsstatistiken das engste
+Intervall bei gegebener Konfidenz findet -- eine Verbesserung
+gegenüber dem in der Standardliteratur (Meeker et~al., 2017)
+beschriebenen symmetrischen Ansatz. Ein Entscheidungsalgorithmus
+wählt automatisch das geeignete Verfahren anhand von Stichprobenumfang und
+Verteilungstests aus. Die Implementierung erfolgt in Python mit
+PySide6-Oberfläche.}
+\end{center}
+\vspace{8mm}
+}]
+
+\tableofcontents
+\vspace{6mm}
+
+% ══════════════════════════════════════════════════════════════
+\section{Warum Toleranzintervalle?}
+\label{sec:motivation}
+% ══════════════════════════════════════════════════════════════
+
+In der industriellen Praxis stehen Ingenieure und Qualitätssicherer
+regelmäßig vor der Frage: \emph{Welchen Bereich decken die Messwerte
+meiner Produktion ab?} Diese Frage klingt einfach, aber die Antwort
+hängt davon ab, was genau man wissen möchte.
+
+\subsection{Drei Arten von Intervallen}
+
+Gegeben seien $n$ unabhängige Messwerte $x_1, \ldots, x_n$ aus einer
+Grundgesamtheit mit unbekannter Verteilung $F$.
+
+\begin{definition}[\KI{} für den Mittelwert]
+Ein $100(1-\alpha)\%$-\KI{} ist ein Intervall $[L, U]$, sodass
+\begin{equation}
+    \Prob(\mu \in [L, U]) \geq 1 - \alpha
+\end{equation}
+wobei $\mu = \E[X]$ der wahre Populationsmittelwert ist.
+Das \KI{} macht eine Aussage über einen \emph{Parameter}.
+\end{definition}
+
+\begin{definition}[Prädiktionsintervall]
+Ein $100(1-\alpha)\%$-Prädiktionsintervall ist ein Intervall $[L, U]$,
+sodass ein \emph{einzelner zukünftiger} Messwert $X_{n+1}$ mit
+Wahrscheinlichkeit $\geq 1-\alpha$ in $[L, U]$ fällt.
+\end{definition}
+
+\begin{definition}[\TI{}]
+\label{def:ti}
+Ein $100p / 100(1-\alpha)$-\TI{} ist ein Intervall $[L, U]$,
+das \emph{mindestens den Anteil $p$ der Grundgesamtheit} überdeckt,
+und zwar mit einer Konfidenz von $1 - \alpha$. Formal:
+\begin{equation}
+    \Prob\!\Big(\Prob(X \in [L, U]) \geq p\Big) \geq 1 - \alpha
+    \label{eq:ti_def}
+\end{equation}
+\end{definition}
+
+Der entscheidende Unterschied: Das \KI{} schätzt einen Parameter
+(Punkt), das Prädiktionsintervall sagt einen einzelnen Wert voraus,
+das \TI{} charakterisiert einen \emph{Anteil der Population}.
+
+\subsection{Praktische Motivation}
+
+Toleranzintervalle beantworten Fragen wie:
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \emph{Welcher Bereich umfasst 95\% aller produzierten Teile?}
+    \item \emph{Können wir mit 99\% Konfidenz sagen, dass 90\% der
+          Lebensdauern über 1000\,h liegen?}
+    \item \emph{Liegen unsere Messwerte innerhalb der Spezifikation?}
+\end{itemize}
+
+In der industriellen Qualitätssicherung nach ISO~16269 sind
+Toleranzintervalle das Standardwerkzeug, um aus Stichproben auf
+die Streuung der Grundgesamtheit zu schließen.
+
+\hinweis{Ein 95/95-\TI{} bedeutet: Mit 95\% Konfidenz überdeckt
+das Intervall mindestens 95\% der Population. Beides -- Abdeckung
+\emph{und} Konfidenz -- muss angegeben werden.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Verteilungsfreies Toleranzintervall}
+\label{sec:verteilungsfrei}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Grundidee}
+
+Das verteilungsfreie Verfahren macht \emph{keine Annahme} über die
+Form der Grundgesamtheit. Es nutzt ausschließlich die
+Ordnungsstatistiken der Stichprobe.
+
+\begin{definition}[Ordnungsstatistiken]
+Seien $x_1, \ldots, x_n$ die Messwerte. Die Ordnungsstatistiken sind
+die aufsteigend sortierten Werte:
+\[
+    x_{(1)} \leq x_{(2)} \leq \cdots \leq x_{(n)}
+\]
+\end{definition}
+
+\subsection{Zweiseitiges Intervall}
+
+Für das Intervall $[x_{(\ell)}, x_{(u)}]$ mit $1 \leq \ell < u \leq n$
+ist die Wahrscheinlichkeit, dass dieses Intervall mindestens den
+Anteil $p$ der Population überdeckt, gegeben durch die
+\emph{Coverage Probability of a Tolerance Interval}
+(Meeker et~al., 2017, Formel~5.9):
+
+\begin{satz}[CPTI-Formel]
+\label{satz:cpti}
+Die Konfidenz für das Intervall $[x_{(\ell)}, x_{(u)}]$ ist
+\[
+    \mathrm{CPTI}(n, \ell, u, p) = \sum_{i=0}^{d-1} \binom{n}{i}\,p^i\,(1-p)^{n-i}
+\]
+wobei $d = u - \ell$ der \emph{Span} (Anzahl der Werte zwischen den Grenzen)
+ist. Dies entspricht der Binomial-CDF: $\mathrm{CPTI} = F_{\mathrm{Binom}}(d-1;\,n,\,p)$.
+\end{satz}
+
+\hinweis{Die Konfidenz hängt \textbf{nur vom Span $d = u - \ell$ ab},
+nicht von der Position $(\ell, u)$ innerhalb der sortierten Stichprobe.
+Diese Eigenschaft ist der Schlüssel zur weiter unten beschriebenen Optimierung
+(\cref{sec:optimierung}).}
+
+Für den Spezialfall $\ell=1, u=n$ (äußerste Ordnungsstatistiken,
+$d = n-1$) vereinfacht sich die Formel:
+
+\begin{satz}[Konfidenz für Minimum und Maximum]
+\label{satz:minmax}
+Für den Spezialfall $d = n-1$ (Intervall $[x_{(1)}, x_{(n)}]$) gilt:
+\[
+    C(n, p) = 1 - n\,p^{n-1} + (n-1)\,p^n
+\]
+\end{satz}
+
+\begin{proof}
+Folgt direkt aus \cref{satz:cpti} mit $d = n-1$: Die Summation
+über die Binomialterme ergibt nach Umformung die geschlossene Form
+$1 - np^{n-1} + (n-1)p^n$.
+\end{proof}
+
+Das \emph{minimale $n$} für vorgegebene Abdeckung $p$ und
+Konfidenz $1-\alpha$ ergibt sich durch Lösen von
+\begin{equation}
+    1 - n\,p^{n-1} + (n-1)\,p^n \geq 1 - \alpha
+    \label{eq:min_n_two}
+\end{equation}
+nach dem kleinsten ganzzahligen $n$.
+
+\subsection{Symmetrisches Trimmen nach Meeker}
+\label{sec:meeker_symm}
+
+Der klassische Ansatz (Meeker et~al., 2017, Kap.~5) bestimmt einen
+Parameter $\nu$ aus Tabelle~J.11, der angibt, wie viele
+Ordnungsstatistiken von den Rändern entfernt werden. Die Aufteilung
+erfolgt symmetrisch:
+\[
+    \ell = \lfloor \nu/2 \rfloor, \qquad u = n - \lceil \nu/2 \rceil + 1
+\]
+Für den Fall, dass die resultierende Konfidenz den geforderten Wert
+$1-\alpha$ deutlich übersteigt, beschreibt Meeker eine
+\emph{Interpolationsmethode} (Example~5.10): Man bildet einen
+gewichteten Durchschnitt zwischen dem konservativen und dem
+nichtkonservativen Randpaar.
+
+Dieser Ansatz hat zwei Nachteile:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Symmetrische Aufteilung:} Bei schiefen Verteilungen
+    liegt die Datenspannweite nicht symmetrisch um das Zentrum. Das
+    symmetrische Trimmen kann ein unnötig breites Intervall ergeben.
+    \item \textbf{Interpolation:} Die Interpolation zwischen konservativem
+    und nichtkonservativem Intervall ist nicht mehr streng verteilungsfrei
+    und kann das Intervall sogar \emph{breiter} machen als das konservative
+    Ergebnis (siehe \cref{sec:vergleich_meeker}).
+\end{enumerate}
+
+\subsection{Optimierung: Gleitendes Fenster}
+\label{sec:optimierung}
+
+Da die Konfidenz gemäß \cref{satz:cpti} ausschließlich vom Span $d$
+abhängt, kann man das Fenster $[\ell, \ell + d]$ über alle zulässigen
+Positionen $\ell = 1, \ldots, n - d$ verschieben und dasjenige wählen,
+für das die Intervallbreite $x_{(\ell+d)} - x_{(\ell)}$ minimal wird.
+
+\begin{satz}[Optimales verteilungsfreies TI]
+\label{satz:opt_df}
+Sei $d^*$ der minimale Span mit
+$F_{\mathrm{Binom}}(d^* - 1;\, n,\, p) \geq 1 - \alpha$,
+und sei
+\[
+    \ell^* = \arg\min_{\ell \in \{1,\ldots,n-d^*\}}
+        \big(x_{(\ell + d^*)} - x_{(\ell)}\big).
+\]
+Dann ist $[x_{(\ell^*)},\; x_{(\ell^* + d^*)}]$ das engste
+verteilungsfreie $(p,\,1{-}\alpha)$-Toleranzintervall mit der
+Konfidenzgarantie:
+\[
+    \mathrm{CPTI}(n, \ell^*, \ell^* + d^*, p) = F_{\mathrm{Binom}}(d^* - 1;\, n,\, p) \geq 1-\alpha
+\]
+\end{satz}
+
+\begin{proof}
+Die Konfidenz ist invariant unter Verschiebung des Fensters (da sie nur
+von $d$ abhängt). Also hat das verschobene Intervall exakt dieselbe
+statistische Garantie wie jedes andere Intervall mit gleichem $d$.
+Die Wahl von $\ell^*$ minimiert lediglich die Breite -- ein reiner
+Informationsgewinn ohne Verlust der Konfidenz.
+\end{proof}
+
+Der Algorithmus läuft in $O(n)$ -- ein einziger Durchlauf über die
+sortierten Daten genügt. Die Implementierung ist trivial:
+
+\begin{algorithm}
+\caption{Optimales verteilungsfreies TI}
+\label{alg:opt_df}
+\SetKwInOut{Input}{Eingabe}
+\SetKwInOut{Output}{Ausgabe}
+\Input{Sortierte Daten $x_{(1)}, \ldots, x_{(n)}$; Abdeckung $p$; Konfidenz $1-\alpha$}
+\Output{Optimales Intervall $[x_{(\ell^*)}, x_{(u^*)}]$}
+Finde $d^*$ als kleinstes $d$ mit $F_{\text{Binom}}(d-1; n, p) \geq 1-\alpha$\;
+$w^* \leftarrow \infty$; $\ell^* \leftarrow 1$\;
+\For{$\ell \leftarrow 1$ \KwTo $n - d^*$}{
+    $w \leftarrow x_{(\ell + d^*)} - x_{(\ell)}$\;
+    \lIf{$w < w^*$}{$w^* \leftarrow w$; $\ell^* \leftarrow \ell$}
+}
+\Return{$[x_{(\ell^*)}, x_{(\ell^* + d^*)}]$}
+\end{algorithm}
+
+\subsection{Vergleich mit Meeker: Compound-Amount-Daten}
+\label{sec:vergleich_meeker}
+
+Als Testdaten verwenden wir die 100~Messwerte aus Meeker et~al.\
+(2017, Table~5.1): geordnete Konzentrationen (ppm) eines chemischen
+Prozesses, mit $x_{(1)} = 1.49$ und $x_{(100)} = 58.11$.
+Die Daten sind deutlich rechtsschief.
+
+Gesucht: zweiseitiges TI mit $p = 0.90$, $1-\alpha = 0.95$.
+
+\begin{table}[H]
+\centering
+\caption{Vergleich der Verfahren für die Meeker-Daten ($n=100$, $p=0.90$, $1-\alpha = 0.95$)}
+\label{tab:meeker_vergleich}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Methode & $\ell$ & $u$ & Konfidenz & Breite \\
+\midrule
+Naiv ($x_{(1)}, x_{(n)}$) & 1 & 100 & 99.97\% & 56.62 \\
+Meeker Ex.\,5.9 (symm.) & 2 & 98 & 97.63\% & 35.66 \\
+Meeker Ex.\,5.10 (interp.) & -- & -- & $\approx$\,95\% & 37.78 \\
+\textbf{Optimiert (unser)} & \textbf{1} & \textbf{97} & \textbf{97.63\%} & \textbf{31.75} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Die Ergebnisse zeigen:
+
+\begin{enumerate}[leftmargin=*]
+    \item Der \textbf{naive Ansatz} ($\ell=1, u=100$) liefert zwar eine
+    Konfidenz von 99.97\%, ist aber mit einer Breite von 56.62 stark
+    überkonservativ -- die statistisch nicht genutzte Reservekonfidenz
+    ist verschwendete Information.
+
+    \item \textbf{Meeker Ex.\,5.9} trimmt symmetrisch ($\nu = 5 \Rightarrow \ell=2, u=98$)
+    und reduziert den Span auf $d = 96$ (CPTI $= 0.9763$). Das Intervall
+    $[1.66,\; 37.32]$ ist deutlich enger.
+
+    \item \textbf{Meeker Ex.\,5.10} interpoliert zwischen dem konservativen
+    und nichtkonservativen Intervall, um die Konfidenz auf genau 95\% zu
+    treffen. Paradoxerweise wird das Intervall dadurch \emph{breiter}
+    (37.78 statt 35.66), weil die Interpolation die obere Grenze
+    Richtung $x_{(99)} = 53.43$ zieht.
+
+    \item \textbf{Unsere Optimierung} nutzt denselben Span $d = 96$ wie
+    Meeker und hat identische Konfidenz (97.63\%), verschiebt aber das
+    Fenster nach $\ell = 1, u = 97$. Die obere Grenze fällt von 37.32
+    auf 33.24 -- eine \textbf{Reduktion der Intervallbreite um 11\%}.
+\end{enumerate}
+
+\hinweis{Bei symmetrischen Daten liefert die Optimierung dasselbe
+Ergebnis wie Meekers symmetrischer Ansatz. Der Vorteil zeigt sich
+gerade bei schiefen Verteilungen, wo die Extremwerte auf einer Seite
+konzentriert sind -- also genau dann, wenn man das verteilungsfreie
+Verfahren braucht, weil die Normalverteilung nicht passt.}
+
+Warum verwendet Meeker nicht diese Optimierung? Der Grund ist
+historisch: Das Tabellensystem (Table~J.11) wurde für die
+Taschenrechner-Ära entworfen, in der man einen Parameter $\nu$
+nachschlägt und symmetrisch aufteilt. Die Fenster-Optimierung
+braucht Zugriff auf die gesamten sortierten Daten und eine
+Schleife -- trivial für einen Rechner, aber nicht für Papier und
+Bleistift. In der zweiten Auflage (2017) wurde das Framework
+beibehalten, obwohl Meeker R verwendet.
+
+\subsection{Einseitiges Intervall}
+
+Für ein oberes einseitiges \TI{} $(-\infty, x_{(n)}]$ gilt:
+\begin{equation}
+    \Prob\!\big(F(x_{(n)}) \geq p\big) = 1 - p^n
+    \label{eq:df_one}
+\end{equation}
+
+Das minimale $n$ folgt aus $1 - p^n \geq 1 - \alpha$:
+\begin{equation}
+    n \geq \frac{\ln \alpha}{\ln p}
+    \label{eq:min_n_one}
+\end{equation}
+
+Analog für das untere einseitige Intervall $[x_{(1)}, \infty)$.
+
+\subsection{Mindeststichprobengrößen}
+
+\Cref{tab:min_n} zeigt die resultierenden Mindest-$n$ für gängige
+Kombinationen von $p$ und $1-\alpha$.
+
+\begin{table}[H]
+\centering
+\caption{Minimales $n$ für verteilungsfreie TI
+($r=1, s=n$)}
+\label{tab:min_n}
+\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$p$ & $1-\alpha$ & einseitig & zweiseitig \\
+\midrule
+0.90 & 0.90 &  22 &  38 \\
+0.90 & 0.95 &  29 &  46 \\
+0.90 & 0.99 &  44 &  64 \\
+\midrule
+0.95 & 0.90 &  45 &  77 \\
+0.95 & 0.95 &  59 &  93 \\
+0.95 & 0.99 &  90 & 130 \\
+\midrule
+0.99 & 0.90 & 230 & 388 \\
+0.99 & 0.95 & 299 & 473 \\
+0.99 & 0.99 & 459 & 662 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\warnung{Für $p=0.99$ bei $1-\alpha=0.99$ sind \textbf{662 Messwerte}
+nötig. Bei teuren Prüfungen (z.\,B.\ Lebensdauertests) ist das
+verteilungsfreie Verfahren oft nicht praktikabel -- man muss dann
+auf ein parametrisches Verfahren ausweichen.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Normalverteilungs-Toleranzintervall}
+\label{sec:normal}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Voraussetzung}
+
+Die Messwerte stammen aus einer Normalverteilung:
+$X_i \sim \mathcal{N}(\mu, \sigma^2)$ mit unbekanntem $\mu$ und
+$\sigma$.
+
+\subsection{Der $k$-Faktor}
+
+Das \TI{} hat die Form:
+\begin{equation}
+    [\xbar - k \cdot s, \quad \xbar + k \cdot s]
+    \label{eq:normal_ti}
+\end{equation}
+wobei $\xbar$ der Stichprobenmittelwert und
+$s = \sqrt{\frac{1}{n-1}\sum_{i=1}^n (x_i - \xbar)^2}$
+die Stichprobenstandardabweichung ist.
+
+Der Faktor $k$ muss so bestimmt werden, dass \cref{eq:ti_def}
+erfüllt ist.
+
+\subsubsection{Einseitiger Fall}
+
+Für ein oberes einseitiges \TI{} $(-\infty, \xbar + k \cdot s]$
+folgt $k$ aus der \emph{nichtzentralen $t$-Verteilung}:
+
+\begin{satz}[$k$-Faktor, einseitig]
+\label{satz:k_one}
+Der einseitige $k$-Faktor erfüllt:
+\begin{equation}
+    k = \frac{t_{n-1,\,1-\alpha,\,\delta}}{\sqrt{n}}
+    \label{eq:k_one}
+\end{equation}
+wobei $t_{n-1,\,1-\alpha,\,\delta}$ das $(1-\alpha)$-Quantil der
+nichtzentralen $t$-Verteilung mit $n-1$ Freiheitsgraden und
+Nichtzentralitätsparameter $\delta = z_p \sqrt{n}$ ist, und
+$z_p = \Phi^{-1}(p)$ das $p$-Quantil der Standardnormalverteilung.
+\end{satz}
+
+Die Herleitung nutzt, dass
+$T = \frac{\xbar - \mu}{s/\sqrt{n}}$ einer $t$-Verteilung mit
+$n-1$ Freiheitsgraden folgt und die Toleranzforderung auf ein
+Quantilproblem der nichtzentralen $t$-Verteilung zurückgeführt
+werden kann.
+
+\subsubsection{Zweiseitiger Fall}
+
+Der zweiseitige Fall ist analytisch komplexer. Eine gängige
+Approximation nach \textsc{Howe} (1969) lautet:
+
+\begin{satz}[$k$-Faktor, zweiseitig -- Howe-Approximation]
+\label{satz:k_two}
+\begin{equation}
+    k = z_{(1+p)/2} \cdot
+    \sqrt{\frac{(n-1)\,(1 + 1/n)}{\chi^2_{1-\alpha,\,n-1}}}
+    \label{eq:k_two}
+\end{equation}
+wobei $\chi^2_{1-\alpha,\,n-1}$ das $(1-\alpha)$-Quantil der
+$\chi^2$-Verteilung mit $n-1$ Freiheitsgraden ist (unteres Quantil).
+\end{satz}
+
+Die Idee: Die Unsicherheit in $\xbar$ wird durch den Faktor
+$(1 + 1/n)$ berücksichtigt, die Unsicherheit in $s^2$ durch die
+$\chi^2$-Verteilung.
+
+\subsection{Verhalten des $k$-Faktors}
+
+Für $n \to \infty$ konvergiert $k$ gegen $z_{(1+p)/2}$, d.\,h.\
+die Unsicherheit in der Schätzung von $\mu$ und $\sigma$ verschwindet.
+Für kleines $n$ ist $k$ deutlich größer, was die
+Schätzunsicherheit kompensiert. \Cref{tab:k_values} zeigt einige
+Werte.
+
+\begin{table}[H]
+\centering
+\caption{$k$-Faktoren für $p=0.95$, $1-\alpha=0.95$ (zweiseitig,
+Howe-Approximation)}
+\label{tab:k_values}
+\small
+\begin{tabular}{@{}cc@{}}
+\toprule
+$n$ & $k$ \\
+\midrule
+5   & 4.4141 \\
+10  & 3.0793 \\
+15  & 2.7523 \\
+20  & 2.5836 \\
+30  & 2.4183 \\
+50  & 2.2689 \\
+100 & 2.1330 \\
+$\infty$ & 1.9600 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Normalitätstest: Shapiro-Wilk}
+\label{sec:shapiro}
+% ══════════════════════════════════════════════════════════════
+
+Bevor das Normal-\TI{} angewendet wird, muss die Normalverteilungs-Annahme
+geprüft werden. Der Shapiro-Wilk-Test ist für kleine bis mittlere
+Stichproben ($n \leq 5000$) einer der mächtigsten Tests.
+
+\subsection{Teststatistik}
+
+\begin{definition}[Shapiro-Wilk-Teststatistik]
+\begin{equation}
+    W = \frac{\left(\sum_{i=1}^{n} a_i\, x_{(i)}\right)^2}
+             {\sum_{i=1}^{n} (x_i - \xbar)^2}
+    \label{eq:shapiro}
+\end{equation}
+wobei $x_{(i)}$ die Ordnungsstatistiken sind und die Gewichte
+$a_i$ aus der Kovarianzmatrix der Ordnungsstatistiken der
+Standardnormalverteilung berechnet werden:
+\begin{equation}
+    (a_1, \ldots, a_n) = \frac{\mathbf{m}^T \mathbf{V}^{-1}}
+    {\|\mathbf{V}^{-1}\mathbf{m}\|}
+\end{equation}
+mit $\mathbf{m} = \E[\mathbf{Z}_{(i)}]$ den erwarteten
+Ordnungsstatistiken und $\mathbf{V}$ deren Kovarianzmatrix.
+\end{definition}
+
+\subsection{Testentscheidung}
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item $H_0$: Die Daten stammen aus einer Normalverteilung
+    \item $H_1$: Die Daten stammen nicht aus einer Normalverteilung
+    \item Ablehnung von $H_0$, wenn der $p$-Wert $< \alpha$
+          (typisch: $\alpha = 0.05$)
+\end{itemize}
+
+\hinweis{Der Shapiro-Wilk-Test testet auf \emph{Abweichung} von der
+Normalität. Ein hoher $p$-Wert \emph{bestätigt} nicht die
+Normalverteilung -- er sagt nur, dass die Daten nicht signifikant
+davon abweichen. Bei kleinem $n$ hat der Test wenig Macht.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Lognormal-Toleranzintervall}
+\label{sec:lognormal}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Voraussetzung}
+
+Die Messwerte $x_i > 0$ folgen einer Lognormalverteilung, d.\,h.\
+$\ln(x_i) \sim \mathcal{N}(\mu_{\ln}, \sigma_{\ln}^2)$.
+
+Typische Anwendungen: Konzentrationen, Einkommen, Partikelgrößen,
+bestimmte Lebensdauern.
+
+\subsection{Verfahren}
+
+Die Grundidee ist denkbar einfach: Man transformiert die Daten
+auf die Log-Skala, berechnet dort ein Normal-\TI{} und
+transformiert zurück.
+
+\begin{enumerate}[nosep,leftmargin=*]
+    \item Berechne $y_i = \ln(x_i)$
+    \item Berechne $\bar{y}$ und $s_y$ auf der Log-Skala
+    \item Bestimme $k$ nach \cref{eq:k_two} (oder \cref{eq:k_one})
+    \item Das \TI{} auf der Originalskala ist:
+\end{enumerate}
+
+\begin{equation}
+    \big[\exp(\bar{y} - k \cdot s_y), \quad
+          \exp(\bar{y} + k \cdot s_y)\big]
+    \label{eq:lognormal_ti}
+\end{equation}
+
+\subsection{Verteilungstest}
+
+Die Lognormalitäts-Annahme wird geprüft, indem der Shapiro-Wilk-Test
+auf die \emph{log-transformierten} Daten $y_i = \ln(x_i)$ angewendet
+wird.
+
+\hinweis{Das Lognormal-\TI{} ist \emph{asymmetrisch} auf der
+Originalskala -- die obere Grenze kann sehr viel weiter vom Median
+entfernt sein als die untere. Das ist physikalisch sinnvoll für
+rechtsschiefe Daten.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Weibull-Toleranzintervall}
+\label{sec:weibull}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Die Weibull-Verteilung}
+
+Die Weibull-Verteilung ist \emph{das} Standardmodell für Lebensdauer-
+und Zuverlässigkeitsanalysen. Ihre Dichte lautet:
+
+\begin{equation}
+    f(x; c, \lambda) = \frac{c}{\lambda}
+    \left(\frac{x}{\lambda}\right)^{c-1}
+    \exp\!\left[-\left(\frac{x}{\lambda}\right)^c\right]
+    \label{eq:weibull_pdf}
+\end{equation}
+für $x > 0$, mit Formparameter $c > 0$ und Skalenparameter $\lambda > 0$.
+
+Die Verteilungsfunktion ist:
+\begin{equation}
+    F(x) = 1 - \exp\!\left[-\left(\frac{x}{\lambda}\right)^c\right]
+    \label{eq:weibull_cdf}
+\end{equation}
+
+\subsection{Interpretation des Formparameters}
+
+Der Parameter $c$ bestimmt die Form der Ausfallrate:
+\begin{itemize}[nosep,leftmargin=*]
+    \item $c < 1$: abnehmende Ausfallrate (Frühausfälle, \emph{infant mortality})
+    \item $c = 1$: konstante Ausfallrate (Exponentialverteilung)
+    \item $c > 1$: zunehmende Ausfallrate (Alterung, Verschleiß)
+    \item $c \approx 3.6$: annähernd normalverteilt
+\end{itemize}
+
+\subsection{Parameterschätzung}
+
+Die Parameter $c$ und $\lambda$ werden per
+\emph{Maximum-Likelihood-Estimation} (MLE) geschätzt.
+Die Log-Likelihood ist:
+
+\begin{equation}
+    \ell(c, \lambda) = n \ln c - n c \ln \lambda
+    + (c-1)\sum_{i=1}^n \ln x_i
+    - \sum_{i=1}^n \left(\frac{x_i}{\lambda}\right)^c
+    \label{eq:weibull_loglik}
+\end{equation}
+
+Die Maximierung erfolgt numerisch (z.\,B.\ über
+\texttt{scipy.stats.weibull\_min.fit}).
+
+\subsection{Anpassungstest}
+
+Da \texttt{scipy.stats.anderson} die Weibull-Verteilung nicht direkt
+unterstützt, verwenden wir einen \emph{Kolmogorow-Smirnow-Test mit
+Monte-Carlo-Korrektur} (Lilliefors-Ansatz):
+
+\begin{enumerate}[nosep,leftmargin=*]
+    \item Fitte Weibull$(c, \lambda)$ per MLE an die Daten
+    \item Berechne die KS-Statistik:
+        \begin{equation}
+            D_n = \sup_x \big|F_n(x) - F(x; \hat{c}, \hat{\lambda})\big|
+            \label{eq:ks_stat}
+        \end{equation}
+    \item Simuliere $N_{\text{MC}} = 500$ Stichproben aus
+          Weibull$(\hat{c}, \hat{\lambda})$
+    \item Für jede Simulation: fitte neu und berechne $D_n^{(j)}$
+    \item Der Monte-Carlo-$p$-Wert ist:
+        \begin{equation}
+            p_{\text{MC}} = \frac{1}{N_{\text{MC}}}
+            \sum_{j=1}^{N_{\text{MC}}} \mathbf{1}[D_n^{(j)} \geq D_n]
+            \label{eq:mc_pvalue}
+        \end{equation}
+\end{enumerate}
+
+\warnung{Der naive KS-$p$-Wert (ohne Monte-Carlo-Korrektur) ist
+\emph{zu liberal}, wenn die Parameter aus denselben Daten geschätzt
+werden. Die Korrektur via Simulation ist essenziell
+(Lilliefors-Problem).}
+
+\subsection{Toleranzintervall via parametrischem Bootstrap}
+
+Für die Weibull-Verteilung existiert keine geschlossene Formel für
+den $k$-Faktor analog zum Normalfall. Stattdessen verwenden wir
+\emph{parametrischen Bootstrap}:
+
+\begin{enumerate}[nosep,leftmargin=*]
+    \item Fitte Weibull$(c, \lambda)$ an die Originaldaten
+    \item Für $b = 1, \ldots, B$ (typisch $B = 2000$):
+    \begin{enumerate}[nosep]
+        \item Generiere $n$ Werte aus Weibull$(\hat{c}, \hat{\lambda})$
+        \item Fitte neu: $\hat{c}^{(b)}, \hat{\lambda}^{(b)}$
+        \item Berechne die Zielquantile:
+            \begin{align}
+                q_L^{(b)} &= F^{-1}\!\left(\frac{1-p}{2};\,
+                    \hat{c}^{(b)}, \hat{\lambda}^{(b)}\right) \\
+                q_U^{(b)} &= F^{-1}\!\left(\frac{1+p}{2};\,
+                    \hat{c}^{(b)}, \hat{\lambda}^{(b)}\right)
+            \end{align}
+    \end{enumerate}
+    \item Die Konfidenzgrenzen des \TI{}s sind:
+        \begin{align}
+            L &= Q_{\alpha/2}\!\left(\{q_L^{(b)}\}_{b=1}^B\right) \\
+            U &= Q_{1-\alpha/2}\!\left(\{q_U^{(b)}\}_{b=1}^B\right)
+            \label{eq:bootstrap_bounds}
+        \end{align}
+        wobei $Q_\gamma$ das $\gamma$-Quantil der Bootstrap-Verteilung bezeichnet.
+\end{enumerate}
+
+Die Idee: Die Bootstrap-Verteilung der Quantilschätzer bildet die
+Parameterunsicherheit ab. Indem wir konservative Perzentile wählen
+(unteres Ende der unteren Grenze, oberes Ende der oberen), erhalten
+wir ein \TI{} mit der geforderten Konfidenz.
+
+\subsection{Weibull-Quantilfunktion}
+
+Die Quantilfunktion der Weibull-Verteilung hat eine geschlossene Form:
+\begin{equation}
+    F^{-1}(q) = \lambda \cdot \big(-\ln(1-q)\big)^{1/c}
+    \label{eq:weibull_quantile}
+\end{equation}
+
+Dies macht die Bootstrap-Berechnung numerisch effizient.
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Automatische Methodenwahl}
+\label{sec:algorithmus}
+% ══════════════════════════════════════════════════════════════
+
+Der zentrale Beitrag der Implementierung ist ein Entscheidungs-Algorithmus, der automatisch das geeignetste Verfahren auswählt.
+
+\subsection{Entscheidungslogik}
+
+\begin{algorithm}
+\SetAlgoLined
+\KwIn{Daten $x_1, \ldots, x_n$; Abdeckung $p$; Konfidenz $1-\alpha$;
+      Seite; Shapiro-$\alpha_s$}
+\KwOut{Toleranzintervall $[L, U]$ mit Methode}
+
+\tcc{Schritt 1--3: Parametrische Verfahren (nutzen alle $n$ Datenpunkte)}
+\If{$n \geq 3$}{
+    $(W, p_W) \leftarrow$ Shapiro-Wilk$(x_1, \ldots, x_n)$\;
+    \If{$p_W \geq \alpha_s$}{
+        \Return Normal-TI ($k$-Faktor)\;
+    }
+}
+\If{$\forall i: x_i > 0$ \textbf{und} $n \geq 3$}{
+    $(W, p_W) \leftarrow$ Shapiro-Wilk$(\ln x_1, \ldots, \ln x_n)$\;
+    \If{$p_W \geq \alpha_s$}{
+        \Return Lognormal-TI ($k$-Faktor auf Log-Skala)\;
+    }
+}
+\If{$\forall i: x_i > 0$ \textbf{und} $n \geq 5$}{
+    $(c, \lambda, D_n, p_{\text{MC}}) \leftarrow$ Weibull-GoF\;
+    \If{$p_{\text{MC}} \geq \alpha_s$}{
+        \Return Weibull-TI (parametrischer Bootstrap)\;
+    }
+}
+\tcc{Schritt 4: Verteilungsfrei (braucht viele Daten)}
+$n_{\min} \leftarrow$ \texttt{min\_n}$(p, 1-\alpha, \text{Seite})$\;
+\If{$n \geq n_{\min}$}{
+    \Return Verteilungsfreies TI (Ordnungsstatistiken, Fensteroptimierung)\;
+}
+\tcc{Schritt 5: Letzter Ausweg}
+\Return Normal-TI mit Warnung (Fallback)\;
+
+\caption{Automatische Methodenwahl (parametrisch zuerst)}
+\label{algo:auto}
+\end{algorithm}
+
+\subsection{Begründung der Reihenfolge}
+
+Die Priorisierung folgt dem Prinzip \emph{maximaler
+Informationsnutzung}:
+
+\begin{enumerate}[nosep,leftmargin=*]
+    \item \textbf{Parametrische Verfahren zuerst} (Normal, Lognormal,
+          Weibull): Diese nutzen \emph{alle $n$ Datenpunkte}
+          ($\xbar$, $s$, bzw.\ MLE-Schätzer) und liefern daher
+          engere Intervalle. Besonders bei kleinem $n$ ist der
+          Informationsgewinn gegenüber dem verteilungsfreien Verfahren
+          erheblich.
+    \item \textbf{Normal vor Lognormal}: Vermeidet, dass bei
+          annähernd symmetrischen positiven Daten fälschlicherweise
+          Lognormal gewählt wird, nur weil Shapiro-Wilk auf
+          $\ln(x)$ zufällig einen höheren $p$-Wert liefert.
+    \item \textbf{Weibull nach Lognormal}: Die $k$-Faktor-Methode
+          ist analytisch sauberer und schneller als der
+          Monte-Carlo-Bootstrap.
+    \item \textbf{Verteilungsfrei als bewusste Wahl}: Kommt erst
+          zum Zug, wenn keine parametrische Verteilung passt
+          \emph{und} $n \geq n_{\min}$. Bei $n \gg n_{\min}$
+          kann die Fensteroptimierung (\cref{sec:optimierung}) innere
+          Ordnungsstatistiken wählen und liefert dann ein
+          konkurrenzfähiges Intervall.
+    \item \textbf{Fallback}: Wenn weder eine Verteilung passt noch
+          genug Daten für das verteilungsfreie Verfahren vorliegen,
+          liefert das Normal-TI zumindest eine Orientierung --
+          aber mit deutlicher Warnung.
+\end{enumerate}
+
+\warnung{Das verteilungsfreie Verfahren ist \textbf{nicht} der
+konservativste oder sicherste Ansatz -- bei $n \approx n_{\min}$
+ist es der \emph{schwächste}, weil es nur die Extremwerte
+$x_{(1)}$ und $x_{(n)}$ verwenden kann. Ein parametrisches
+Verfahren, dessen Verteilungsannahme durch den Shapiro-Wilk-Test
+gestützt wird, liefert engere und informativere Intervalle.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Einseitige Toleranzintervalle}
+\label{sec:einseitig}
+% ══════════════════════════════════════════════════════════════
+
+Alle beschriebenen Verfahren unterstützen einseitige Intervalle:
+
+\subsection{Oberes Toleranzintervall}
+$(-\infty, U]$: Garantiert, dass mindestens $p$ der Population
+\emph{unterhalb} von $U$ liegt.
+\begin{itemize}[nosep,leftmargin=*]
+    \item Verteilungsfrei: $U = x_{(n)}$, Konfidenz $1 - p^n$
+    \item Normal: $U = \xbar + k_{\text{eins}} \cdot s$
+          mit $k$ nach \cref{eq:k_one}
+\end{itemize}
+
+\subsection{Unteres Toleranzintervall}
+$[L, \infty)$: Garantiert, dass mindestens $p$ der Population
+\emph{oberhalb} von $L$ liegt.
+\begin{itemize}[nosep,leftmargin=*]
+    \item Verteilungsfrei: $L = x_{(1)}$
+    \item Normal: $L = \xbar - k_{\text{eins}} \cdot s$
+\end{itemize}
+
+\subsection{Anwendung}
+
+Einseitige Intervalle sind relevant, wenn nur eine Richtung
+interessiert:
+\begin{itemize}[nosep,leftmargin=*]
+    \item Mindest-Lebensdauer: \emph{unteres} TI
+    \item Maximal-Schadstoffgehalt: \emph{oberes} TI
+    \item Mindest-Festigkeit: \emph{unteres} TI
+\end{itemize}
+
+Der einseitige $k$-Faktor ist kleiner als der zweiseitige
+(bei gleichem $p$ und $1-\alpha$), weil die
+,,Wahrscheinlichkeitsmasse'' nicht auf zwei Seiten verteilt werden
+muss.
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Verifikation und Tests}
+\label{sec:tests}
+% ══════════════════════════════════════════════════════════════
+
+Die Implementierung wird durch 21~Unit-Tests abgesichert, die
+alle wesentlichen Eigenschaften prüfen.
+
+\subsection{Tests der Mindeststichprobengrößen}
+
+Die berechneten Werte werden gegen die Referenztabellen geprüft:
+\begin{align*}
+    n_{\min}(p{=}0.95, 1{-}\alpha{=}0.95, \text{zweiseitig}) &= 93 \\
+    n_{\min}(p{=}0.95, 1{-}\alpha{=}0.95, \text{einseitig}) &= 59 \\
+    n_{\min}(p{=}0.99, 1{-}\alpha{=}0.99, \text{zweiseitig}) &= 662 \\
+    n_{\min}(p{=}0.90, 1{-}\alpha{=}0.90, \text{zweiseitig}) &= 38
+\end{align*}
+
+\subsection{Tests des $k$-Faktors}
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{Positivität}: $k > 0$ für alle gültigen Parameter
+    \item \textbf{Monotonie in $n$}: $k(n=20) > k(n=100)$ --
+          mehr Daten $\Rightarrow$ kleinerer $k$-Faktor
+    \item \textbf{Einseitig $<$ Zweiseitig}: $k_{\text{eins}} < k_{\text{zwei}}$
+          bei gleichen Parametern
+\end{itemize}
+
+\subsection{Tests der Methodenwahl}
+
+Die automatische Entscheidungslogik wird mit synthetischen Daten
+geprüft:
+
+\begin{table}[H]
+\centering
+\caption{Testszenarien für die automatische Methodenwahl}
+\label{tab:tests}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Szenario & $n$ & Erwartete Methode \\
+\midrule
+$\mathcal{N}(\mu, \sigma^2)$ & 100 & Normal ($k$-Faktor) \\
+$\mathcal{N}(\mu, \sigma^2)$ &  20 & Normal ($k$-Faktor) \\
+$\text{Lognormal}(\mu, \sigma)$ &  25 & Lognormal \\
+Bimodal & 100 & Verteilungsfrei \\
+Bimodal &  15 & Fallback (Warnung) \\
+Mit NaN-Werten & 100 & Korrekte $n$-Zählung \\
+$n < 2$ & 1 & ValueError \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Tests der Intervallgrenzen}
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{Verteilungsfrei}: Grenzen = $x_{(1)}$ und $x_{(n)}$;
+          tatsächliche Konfidenz $\geq$ geforderte Konfidenz
+    \item \textbf{Normal}: Intervall symmetrisch um $\xbar$, d.\,h.\
+          $\xbar - L = U - \xbar$ (bis Maschinengenauigkeit)
+    \item \textbf{Lognormal}: Beide Grenzen strikt positiv; $L < U$;
+          negative Eingabedaten $\Rightarrow$ \texttt{ValueError}
+    \item \textbf{Weibull}: Grenzen strikt positiv;
+          negative Eingabedaten $\Rightarrow$ \texttt{ValueError}
+    \item \textbf{Einseitig}: Korrekte \texttt{None}-Werte für die
+          offene Seite
+\end{itemize}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Praktische Hinweise}
+\label{sec:praxis}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Stichprobengröße}
+
+Die Faustregel: \emph{Mehr Daten $=$ engere Intervalle}.
+Aber die Verbesserung ist nichtlinear -- der Sprung von $n=10$
+auf $n=30$ bringt viel mehr als von $n=100$ auf $n=120$.
+
+Für das verteilungsfreie Verfahren ist $n$ eine harte Schwelle:
+Entweder man hat genug Messwerte oder nicht.
+Für die parametrischen Verfahren gibt es keine Mindestschwelle,
+aber bei $n < 10$ sind die Intervalle so breit, dass sie kaum
+noch nützlich sind.
+
+\subsection{Umgang mit Ausreißern}
+
+Toleranzintervalle sind \emph{nicht robust} gegen Ausreißer:
+\begin{itemize}[nosep,leftmargin=*]
+    \item Verteilungsfrei: Wird direkt von Extremwerten bestimmt
+    \item Normal: $\xbar$ und $s$ sind beide ausreißerempfindlich
+    \item Lognormal: Etwas robuster durch die Log-Transformation
+    \item Weibull: MLE kann durch Ausreißer verzerrt werden
+\end{itemize}
+
+\warnung{Ausreißer sollten \emph{vor} der TI-Berechnung
+untersucht werden. Einen echten Messfehler zu entfernen ist
+gerechtfertigt; einen unbequemen, aber validen Messwert zu
+streichen ist Betrug.}
+
+\subsection{Wahl der Abdeckung und Konfidenz}
+
+Typische Kombinationen in der Praxis:
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{90/90}: Screening, Voruntersuchungen
+    \item \textbf{95/95}: Standard in der Qualitätssicherung (ISO~16269)
+    \item \textbf{99/95}: Sicherheitskritische Anwendungen
+    \item \textbf{99/99}: Luftfahrt, Medizinprodukte
+\end{itemize}
+
+\subsection{Grenzen des Fallback-Verfahrens}
+
+Wenn keine der getesteten Verteilungen passt, liefert das
+Normal-TI als Fallback ein Ergebnis. Dieses ist jedoch mit
+Vorsicht zu genießen:
+\begin{itemize}[nosep,leftmargin=*]
+    \item Bei schiefen Verteilungen kann die untere Grenze
+          negativ werden (z.\,B.\ bei Lebensdauerdaten)
+    \item Die tatsächliche Abdeckung kann deutlich von $p$
+          abweichen
+    \item Die Empfehlung lautet: mehr Daten sammeln und/oder
+          domänenspezifisches Wissen über die Verteilung einbringen
+\end{itemize}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Mathematische Zusammenfassung}
+\label{sec:zusammenfassung}
+% ══════════════════════════════════════════════════════════════
+
+\Cref{tab:formeln} fasst die zentralen Formeln aller vier
+Verfahren zusammen.
+
+\begin{table*}[t]
+\centering
+\caption{Übersicht der Verfahren und Formeln für zweiseitige Toleranzintervalle}
+\label{tab:formeln}
+\small
+\begin{tabular}{@{}p{2.8cm}p{3.5cm}p{4.5cm}p{3.5cm}@{}}
+\toprule
+\textbf{Verfahren} & \textbf{Intervall} & \textbf{Schlüsselformel} & \textbf{Voraussetzung} \\
+\midrule
+Normal ($k$-Faktor)
+    & $[\xbar - ks,\; \xbar + ks]$
+    & $k = z_{(1+p)/2}\sqrt{\frac{(n-1)(1+1/n)}{\chi^2_{1-\alpha,n-1}}}$
+    & Shapiro-Wilk $p \geq \alpha_s$ \\[4pt]
+Lognormal
+    & $[e^{\bar{y}-ks_y},\; e^{\bar{y}+ks_y}]$
+    & $k$ wie Normal, auf $y_i = \ln x_i$
+    & $x_i > 0$, SW auf $\ln x$ \\[4pt]
+Weibull (Bootstrap)
+    & $[Q_{\alpha/2}(q_L^{(b)}),$ $Q_{1-\alpha/2}(q_U^{(b)})]$
+    & $q^{(b)} = \hat\lambda^{(b)}(-\ln(1-q))^{1/\hat c^{(b)}}$
+    & $x_i > 0$, MC-KS $p \geq \alpha_s$ \\[4pt]
+Verteilungsfrei
+    & $[x_{(\ell^*)},\; x_{(\ell^*+d^*)}]$
+    & CPTI $= F_{\text{Binom}}(d^*{-}1;\,n,\,p)$
+    & $n \geq n_{\min}$, kein param.\ Fit \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Implementierung}
+\label{sec:implementierung}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Architektur}
+
+Die Software besteht aus zwei Schichten:
+
+\begin{description}[nosep,leftmargin=*,font=\bfseries]
+    \item[Rechenkern] (\texttt{tolerance\_intervals.py}):
+        Reine Berechnungslogik ohne GUI-Abhängigkeiten.
+        Kann auch standalone als Python-Modul verwendet werden.
+    \item[GUI] (\texttt{ti\_gui.py}):
+        PySide6-Oberfläche mit Dateneingabe, Parameterkonfiguration
+        und Ergebnisanzeige.
+\end{description}
+
+\subsection{Abhängigkeiten}
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{NumPy}: Datenverarbeitung, Ordnungsstatistiken
+    \item \textbf{SciPy}: Verteilungen, $k$-Faktor (nichtzentrale
+          $t$-Verteilung, $\chi^2$), Shapiro-Wilk-Test,
+          Weibull-MLE
+    \item \textbf{PySide6}: GUI-Framework (Qt für Python)
+    \item \textbf{PyInstaller}: Standalone-Binary-Erzeugung
+\end{itemize}
+
+\subsection{Projektstruktur}
+
+\begin{verbatim}
+toleranzintervall-rechner/
+  main.py              # Einstiegspunkt
+  build.py             # Build-Skript
+  src/
+    tolerance_intervals.py
+    ti_gui.py
+  tests/
+    test_tolerance.py
+  .run/                # PyCharm Configs
+  pyproject.toml
+  requirements.txt
+  requirements-dev.txt
+\end{verbatim}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Durchgerechnete Beispiele}
+\label{sec:beispiele}
+% ══════════════════════════════════════════════════════════════
+
+Zum besseren Verständnis werden hier alle vier Verfahren an
+konkreten Daten vorgeführt.
+
+\subsection{Beispiel 1: Normal -- Messwerte einer Fertigung}
+
+Gegeben seien $n = 15$ Durchmesser-Messwerte (in mm):
+\[
+    4.2,\; 4.5,\; 4.1,\; 4.8,\; 4.3,\; 4.6,\; 4.4,\; 4.7,\;
+    4.2,\; 4.5,\; 4.3,\; 4.6,\; 4.4,\; 4.5,\; 4.3
+\]
+
+\textbf{Schritt 1: Verteilungsfrei möglich?}
+Für $p = 0.95$, $1-\alpha = 0.95$, zweiseitig gilt
+$n_{\min} = 93$. Da $n = 15 < 93$: nein.
+
+\textbf{Schritt 2: Normalverteilung?}
+Shapiro-Wilk: $W = 0.9726$, $p = 0.8951 \geq 0.05$
+$\Rightarrow$ Normalverteilung wird nicht abgelehnt.
+
+\textbf{Schritt 3: $k$-Faktor berechnen.}
+Mit $n = 15$, $p = 0.95$, $1-\alpha = 0.95$ (zweiseitig):
+\begin{align*}
+    z_{0.975} &= 1.9600 \\[2pt]
+    \chi^2_{0.05,\,14} &= 6.5706 \\[2pt]
+    k &= 1.9600 \cdot \sqrt{\frac{14 \cdot (1 + 1/15)}{6.5706}} = 2.9548
+\end{align*}
+
+\textbf{Schritt 4: Intervall berechnen.}
+\begin{align*}
+    \xbar &= 4.4267 \qquad s = 0.1981 \\[2pt]
+    L &= 4.4267 - 2.9548 \times 0.1981 = 3.8414 \\
+    U &= 4.4267 + 2.9548 \times 0.1981 = 5.0120
+\end{align*}
+
+\textbf{Ergebnis:} $[3.841,\; 5.012]$ mm.
+Mit 95\% Konfidenz liegen mindestens 95\% aller Durchmesser
+in diesem Intervall.
+
+\subsection{Beispiel 2: Verteilungsfrei -- Meeker-Referenzdaten}
+
+Gegeben seien die $n = 100$ geordneten Konzentrationsmesswerte (ppm)
+aus Meeker et~al.\ (2017, Table~5.1) mit
+$x_{(1)} = 1.49$, $x_{(97)} = 33.24$, $x_{(98)} = 37.32$,
+$x_{(100)} = 58.11$.
+
+Gesucht: $p = 0.90$, $1-\alpha = 0.95$, zweiseitig.
+
+\textbf{Schritt 1:} Minimaler Span. Finde kleinstes $d$ mit
+$F_{\text{Binom}}(d-1;\,100,\,0.9) \geq 0.95$.
+Lösung: $d^* = 96$ mit CPTI $= 0.9763$.
+
+\textbf{Schritt 2:} Gleitendes Fenster. Verschiebe $[\ell, \ell + 96]$
+über $\ell = 1, \ldots, 4$:
+\begin{align*}
+    \ell=1: &\quad [1.49,\; 33.24] \quad\text{Breite } 31.75 \quad\checkmark \\
+    \ell=2: &\quad [1.66,\; 37.32] \quad\text{Breite } 35.66 \quad\text{(Meeker)} \\
+    \ell=3: &\quad [2.05,\; 53.43] \quad\text{Breite } 51.38 \\
+    \ell=4: &\quad [2.24,\; 58.11] \quad\text{Breite } 55.87
+\end{align*}
+
+Alle vier haben identische Konfidenz $97.63\%$, da $d = 96$ konstant ist.
+Die Fenster-Optimierung wählt $\ell^* = 1$:
+
+\textbf{Ergebnis:} $[1.49,\; 33.24]$ mit Konfidenz 97.63\%.
+Meeker gibt $[1.66,\; 37.32]$ an -- 11\% breiter bei identischer Konfidenz.
+Der Vorteil entsteht durch die Rechtsschiefe der Daten: die oberen
+Extremwerte (53.43, 58.11) erzwingen beim symmetrischen Trimmen ein
+unnötig breites Intervall.
+
+\subsection{Beispiel 3: Lognormal -- Konzentrationsdaten}
+
+Gegeben seien $n = 25$ Schadstoffkonzentrationen (mg/l),
+die den Shapiro-Wilk-Test auf Normalität \emph{nicht} bestehen
+($p = 0.0035$), aber auf der Log-Skala normalverteilt sind
+($p = 0.4382$).
+
+Auf der Log-Skala:
+\begin{align*}
+    \bar{y} &= 2.9622 \qquad s_y = 0.5234 \\[2pt]
+    k &= z_{0.975} \cdot \sqrt{\frac{24 \cdot (1 + 1/25)}
+         {\chi^2_{0.05,\,24}}} = 2.6313
+\end{align*}
+
+Rücktransformation:
+\begin{align*}
+    L &= \exp(2.9622 - 2.6313 \times 0.5234) = 4.879 \\
+    U &= \exp(2.9622 + 2.6313 \times 0.5234) = 76.66
+\end{align*}
+
+\textbf{Ergebnis:} $[4.88,\; 76.66]$ mg/l.
+Beachte die starke Asymmetrie: die obere Grenze liegt
+$\approx 15\times$ weiter vom Median entfernt als die untere.
+Das ist physikalisch sinnvoll für rechtsschiefe Konzentrationen.
+
+\subsection{Beispiel 4: Weibull -- Lebensdauerdaten}
+
+Gegeben seien $n = 30$ Lebensdauern (Stunden) eines Bauteils
+mit abnehmender Ausfallrate. Shapiro-Wilk lehnt sowohl
+Normalverteilung ($p = 0.0005$) als auch Lognormalverteilung
+($p = 0.0045$) ab.
+
+Weibull-Fit ergibt: $\hat{c} = 0.934$, $\hat{\lambda} = 675.4$~h.
+Der Monte-Carlo-KS-Test: $p_{\text{MC}} = 0.492 \geq 0.05$
+$\Rightarrow$ Weibull wird nicht abgelehnt.
+
+Parametrischer Bootstrap mit $B = 2000$ liefert:
+\[
+    [L, U] = [3.47,\; 4153]~\text{h}
+\]
+
+\textbf{Zum Vergleich:} Das Normal-Fallback hätte
+$[-70,\; 1876]$~h ergeben -- eine \emph{negative untere
+Grenze} für Lebensdauern, was physikalisch sinnlos ist.
+Das Weibull-TI liefert das korrekte Ergebnis: alle Grenzen
+sind positiv.
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Herleitung der $k$-Faktor-Formel}
+\label{sec:herleitung}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Einseitiger Fall -- exakte Lösung}
+
+Für ein oberes \TI{} $(-\infty, \xbar + ks]$ fordern wir:
+\begin{equation}
+    \Prob\!\left(\Phi\!\left(\frac{\xbar + ks - \mu}{\sigma}\right)
+    \geq p\right) = 1 - \alpha
+    \label{eq:k_derive_1}
+\end{equation}
+
+Sei $Z_p = \Phi^{-1}(p)$. Die Forderung
+$\frac{\xbar + ks - \mu}{\sigma} \geq Z_p$ ist äquivalent zu:
+\begin{equation}
+    k \geq \frac{Z_p \sigma - (\xbar - \mu)}{s}
+    = \frac{Z_p}{\frac{s}{\sigma}} - \frac{\xbar - \mu}{s}
+\end{equation}
+
+Definiere $T = \frac{\xbar - \mu}{s/\sqrt{n}} \sim t_{n-1}$
+und verwende $\frac{(n-1)s^2}{\sigma^2} \sim \chi^2_{n-1}$.
+Dann lässt sich zeigen, dass die Bedingung äquivalent ist zu:
+\begin{equation}
+    k\sqrt{n} \geq T^* \sim t_{n-1}(\delta)
+\end{equation}
+wobei $T^*$ einer nichtzentralen $t$-Verteilung mit
+$\delta = Z_p\sqrt{n}$ folgt. Also:
+\begin{equation}
+    k = \frac{t_{n-1,\,1-\alpha,\,Z_p\sqrt{n}}}{\sqrt{n}}
+\end{equation}
+
+Dies ist eine \emph{exakte} Lösung, die numerisch über die
+Quantilfunktion der nichtzentralen $t$-Verteilung berechnet wird.
+
+\subsection{Zweiseitiger Fall -- Approximation}
+
+Für das zweiseitige \TI{} $[\xbar - ks, \xbar + ks]$
+fordern wir:
+\begin{equation}
+    \Prob\!\left(\Phi\!\left(\frac{\xbar + ks - \mu}{\sigma}\right)
+    - \Phi\!\left(\frac{\xbar - ks - \mu}{\sigma}\right)
+    \geq p\right) = 1 - \alpha
+\end{equation}
+
+Dies führt auf ein zweidimensionales Problem in $\xbar$ und $s$,
+das keine geschlossene Lösung hat. Howes Approximation vereinfacht
+durch die Faktorisierung:
+\begin{itemize}[nosep,leftmargin=*]
+    \item Die Unsicherheit in $\xbar$ wird durch $(1 + 1/n)$
+          berücksichtigt (Varianz von $\xbar$)
+    \item Die Unsicherheit in $s^2$ wird durch das $\chi^2$-Quantil
+          eingefangen (Verteilung von $(n-1)s^2/\sigma^2$)
+\end{itemize}
+
+Die resultierende Formel
+\begin{equation}
+    k = z_{(1+p)/2} \cdot
+    \sqrt{\frac{(n-1)(1 + 1/n)}{\chi^2_{1-\alpha,\,n-1}}}
+\end{equation}
+ist für $n \geq 10$ eine gute Approximation. Für kleinere $n$
+gibt es tabellarische Korrekturen (siehe Meeker et al., 2017).
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Vergleich der Verfahren}
+\label{sec:vergleich}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Intervallbreite}
+
+Bei gleichen Daten und gleichen Parametern ($p$, $1-\alpha$)
+liefern die Verfahren unterschiedlich breite Intervalle.
+Generell gilt:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Eigenschaft & Rangfolge \\
+\midrule
+Engste Intervalle & Parametrisch (richtige Verteilung) \\
+Breiteste Intervalle & Verteilungsfrei \\
+Robustheit & Verteilungsfrei $>$ Parametrisch \\
+Rechenzeit & Normal $\ll$ Weibull \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Das verteilungsfreie Intervall ist immer das konservativste
+(breiteste), weil es keine Verteilungsannahme ausnutzt.
+Im Gegenzug ist es immun gegen Modellfehler.
+
+\subsection{Wann welches Verfahren?}
+
+\begin{table}[H]
+\centering
+\caption{Empfehlungen für die Praxis}
+\label{tab:empfehlung}
+\small
+\begin{tabular}{@{}p{3.2cm}p{4cm}@{}}
+\toprule
+\textbf{Situation} & \textbf{Empfehlung} \\
+\midrule
+$n > n_{\min}$, keine Verteilungsinfo &
+    Verteilungsfrei \\[3pt]
+$n < n_{\min}$, Daten symmetrisch &
+    Normal \\[3pt]
+$n < n_{\min}$, Daten rechtsschief, positiv &
+    Lognormal oder Weibull \\[3pt]
+Lebensdauerdaten, $c < 1.5$ &
+    Weibull \\[3pt]
+Keine Verteilung passt &
+    Mehr Daten sammeln \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Rechenaufwand}
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{Verteilungsfrei}: $O(n \log n)$ (Sortieren)
+    \item \textbf{Normal}: $O(n)$ plus Quantilberechnung
+    \item \textbf{Lognormal}: $O(n)$ wie Normal
+    \item \textbf{Weibull GoF}: $O(N_{\text{MC}} \cdot n)$ für
+          Monte-Carlo-KS
+    \item \textbf{Weibull Bootstrap}: $O(B \cdot n)$ für $B$
+          Bootstrap-Replikationen
+\end{itemize}
+
+In der Praxis dauert der Weibull-Pfad einige Sekunden
+(ca.\ 2--5\,s für $n=30$, $B=2000$), alle anderen Verfahren
+sind quasi instantan ($<$\,100\,ms).
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Abgrenzung: TI vs.\ KI vs.\ Prädiktionsintervall}
+\label{sec:abgrenzung}
+% ══════════════════════════════════════════════════════════════
+
+Ein häufiger Fehler in der Praxis ist die Verwechslung der drei
+Intervalltypen. Am Beispiel von $n = 20$ normalverteilten
+Messwerten mit $\xbar = 100$ und $s = 10$:
+
+\begin{table}[H]
+\centering
+\caption{Drei Intervalltypen im Vergleich ($\alpha = 0.05$)}
+\label{tab:vergleich}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Intervalltyp} & \textbf{Formel} & \textbf{Breite} \\
+\midrule
+95\%-KI für $\mu$ &
+    $\xbar \pm t_{0.975,19}\frac{s}{\sqrt{n}}$ &
+    $[95.3,\; 104.7]$ \\[3pt]
+95\%-Prädiktions-I. &
+    $\xbar \pm t_{0.975,19}\,s\sqrt{1+\frac{1}{n}}$ &
+    $[78.4,\; 121.6]$ \\[3pt]
+95/95-TI &
+    $\xbar \pm k \cdot s$ &
+    $[72.5,\; 127.5]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Das \KI{} ist mit Abstand das engste, weil es nur den
+\emph{Mittelwert} einschließen muss -- einen einzelnen Punkt.
+Das Prädiktionsintervall ist breiter, weil es einen
+\emph{zukünftigen Einzelwert} abdecken muss. Das \TI{} ist
+am breitesten, weil es \emph{95\% aller zukünftigen Werte}
+gleichzeitig abdecken muss, und zwar mit einer zusätzlichen
+Konfidenzsicherheit.
+
+Die Breiten-Reihenfolge gilt immer:
+\[
+    |KI| \;<\; |PI| \;<\; |TI|
+\]
+
+\hinweis{Wer ein KI berechnet, aber ein TI braucht, unterschätzt
+die Streuung der Population drastisch. Das ist einer der
+häufigsten statistischen Fehler in technischen Berichten.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Zusammenhang mit Prozessfähigkeitskennzahlen}
+\label{sec:cpk}
+% ══════════════════════════════════════════════════════════════
+
+In der Qualitätssicherung werden häufig Prozessfähigkeitskennzahlen
+wie $C_p$ und $C_{pk}$ verwendet. Es besteht ein enger Zusammenhang
+zu Toleranzintervallen.
+
+\subsection{Definitionen}
+
+Gegeben Spezifikationsgrenzen $\text{LSL}$ (Lower Specification Limit)
+und $\text{USL}$ (Upper Specification Limit):
+
+\begin{align}
+    C_p &= \frac{\text{USL} - \text{LSL}}{6\sigma}
+    \label{eq:cp} \\[4pt]
+    C_{pk} &= \min\!\left(
+        \frac{\text{USL} - \mu}{3\sigma},\;
+        \frac{\mu - \text{LSL}}{3\sigma}
+    \right)
+    \label{eq:cpk}
+\end{align}
+
+\subsection{Verbindung zu Toleranzintervallen}
+
+Ein 99.73/50-\TI{} (Abdeckung 99.73\%, Konfidenz 50\%)
+entspricht genau dem Bereich $\mu \pm 3\sigma$ -- dem
+Nenner von $C_p$. Ein Prozess mit $C_p = 1$ hat also ein
+natürliches Streuband, das gerade die Spezifikationsgrenzen
+ausfüllt.
+
+In der Praxis ist jedoch die \emph{Unsicherheit} in der Schätzung
+von $\mu$ und $\sigma$ relevant. Hier bieten Toleranzintervalle
+den entscheidenden Vorteil: Sie berücksichtigen die
+Stichprobenunsicherheit explizit über die Konfidenz $1-\alpha$.
+
+\begin{satz}[TI und Prozessfähigkeit]
+Ein Prozess erfüllt die Spezifikation mit Abdeckung $p$ und
+Konfidenz $1-\alpha$, wenn das entsprechende \TI{} vollständig
+innerhalb $[\text{LSL}, \text{USL}]$ liegt:
+\begin{equation}
+    \xbar - k \cdot s \geq \text{LSL}
+    \quad\text{und}\quad
+    \xbar + k \cdot s \leq \text{USL}
+    \label{eq:ti_spec}
+\end{equation}
+\end{satz}
+
+Dies ist eine \emph{strengere} Forderung als $C_{pk} \geq 1$,
+weil der $k$-Faktor größer ist als~3 (er berücksichtigt die
+endliche Stichprobe). Erst für $n \to \infty$ konvergieren
+beide Aussagen.
+
+\hinweis{$C_{pk} \geq 1$ aus $n = 30$ Messwerten ist
+\emph{keine} Garantie, dass der Prozess dauerhaft fähig ist.
+Ein 95/95-TI innerhalb der Spezifikation ist die belastbarere
+Aussage.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Bootstrap-Verfahren im Detail}
+\label{sec:bootstrap}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Warum Bootstrap?}
+
+Für die Normalverteilung existiert eine analytische Lösung
+($k$-Faktor). Für andere Verteilungen ist dies oft nicht der
+Fall, insbesondere wenn:
+\begin{itemize}[nosep,leftmargin=*]
+    \item Die Pivotgröße $\frac{\hat{\theta} - \theta}{\hat{\text{se}}}$
+          keine bekannte Verteilung hat
+    \item Die Quantile der Verteilung keine einfache Funktion der
+          Parameter sind
+    \item Konfidenzgrenzen für Funktionale (nicht nur Parameter)
+          gesucht sind
+\end{itemize}
+
+\subsection{Parametrischer vs.\ nichtparametrischer Bootstrap}
+
+\begin{description}[nosep,leftmargin=*,font=\bfseries]
+    \item[Parametrisch:] Simuliere aus der geschätzten Verteilung
+        $\hat{F}(\cdot\,; \hat{\boldsymbol{\theta}})$.
+        Nutzt die Verteilungsannahme aus, liefert engere Intervalle.
+    \item[Nichtparametrisch:] Ziehe mit Zurücklegen aus der
+        empirischen Verteilung $F_n$.
+        Keine Verteilungsannahme, aber breitere Intervalle
+        und instabil bei kleinem $n$.
+\end{description}
+
+Im Weibull-Fall verwenden wir den \emph{parametrischen} Bootstrap,
+weil:
+\begin{enumerate}[nosep,leftmargin=*]
+    \item Die Weibull-Annahme bereits durch den GoF-Test gestützt ist
+    \item Bei $n = 20$--$30$ der nichtparametrische Bootstrap
+          für Extremquantile ($p = 0.025, 0.975$) unzuverlässig ist
+    \item Die parametrische Variante die MLE-Eigenschaften
+          (Konsistenz, Effizienz) nutzt
+\end{enumerate}
+
+\subsection{Konvergenzverhalten}
+
+Die Genauigkeit des Bootstrap-\TI{}s hängt von der Anzahl
+der Replikationen $B$ ab. Für die Perzentil-Methode gilt
+approximativ:
+\begin{equation}
+    \text{se}(\hat{q}_\gamma) \approx
+    \sqrt{\frac{\gamma(1-\gamma)}{B}} \cdot
+    \frac{1}{f(\hat{q}_\gamma)}
+    \label{eq:bootstrap_se}
+\end{equation}
+wobei $f$ die Dichte der Bootstrap-Verteilung ist.
+
+Für $\gamma = 0.025$ und $B = 2000$ ergibt sich
+$\text{se} \approx \frac{0.156}{f(\hat{q}_{0.025})} \cdot
+\frac{1}{\sqrt{2000}} \approx \frac{0.0035}{f(\hat{q})}$,
+was für praktische Zwecke ausreichend genau ist.
+
+\warnung{Bei $B < 500$ können die Bootstrap-Konfidenzgrenzen
+instabil sein. Bei sicherheitskritischen Anwendungen empfiehlt
+sich $B \geq 5000$.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Sensitivitätsanalyse}
+\label{sec:sensitivitaet}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Einfluss des Signifikanzniveaus $\alpha_s$}
+
+Die Wahl von $\alpha_s$ für den Shapiro-Wilk-Test beeinflusst
+die Methodenwahl:
+
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{$\alpha_s = 0.01$ (streng)}: Normalverteilung
+        wird seltener abgelehnt $\Rightarrow$ häufiger Normal-TI.
+        Risiko: TI basiert auf falscher Verteilungsannahme.
+    \item \textbf{$\alpha_s = 0.10$ (liberal)}: Normalverteilung
+        wird häufiger abgelehnt $\Rightarrow$ häufiger
+        Lognormal/Weibull/Fallback. Risiko: Unnötig komplexes
+        Verfahren bei fast-normalen Daten.
+\end{itemize}
+
+Der Standardwert $\alpha_s = 0.05$ ist ein praxiserprobter
+Kompromiss. Bei kleinem $n$ ($< 15$) hat der Shapiro-Wilk-Test
+allerdings wenig Macht -- er lehnt fast nie ab, unabhängig von
+der wahren Verteilung.
+
+\subsection{Einfluss von $n$ auf die Intervallbreite}
+
+Für das Normal-TI (zweiseitig, $p=0.95$, $1-\alpha=0.95$)
+zeigt \Cref{tab:breite} die relative Intervallbreite
+$2k \cdot s$ normiert auf $\sigma$:
+
+\begin{table}[H]
+\centering
+\caption{Relative Breite des 95/95-Normal-TI}
+\label{tab:breite}
+\small
+\begin{tabular}{@{}ccc@{}}
+\toprule
+$n$ & $k$ & $2k$ (in Einheiten $\sigma$) \\
+\midrule
+5   & 4.414 & 8.83 \\
+10  & 3.079 & 6.16 \\
+20  & 2.584 & 5.17 \\
+50  & 2.269 & 4.54 \\
+100 & 2.133 & 4.27 \\
+$\infty$ & 1.960 & 3.92 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Bei $n = 5$ ist das TI mehr als doppelt so breit wie bei
+$n \to \infty$. Die Investition in mehr Messwerte lohnt sich
+besonders im Bereich $n = 5$--$30$.
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Ausblick: Zensierte Daten}
+\label{sec:zensiert}
+% ══════════════════════════════════════════════════════════════
+
+In der Praxis der Lebensdauerprüfung werden Tests häufig
+abgebrochen, bevor alle Prüflinge ausgefallen sind. Die
+resultierenden Daten sind \emph{zensiert}.
+
+\subsection{Zensierungsarten}
+
+\begin{description}[nosep,leftmargin=*,font=\bfseries]
+    \item[Typ-I-Zensierung (zeitlich):] Der Test endet nach
+        einer festen Zeit $T$. Prüflinge, die bis $T$ nicht
+        ausgefallen sind, liefern nur die Information
+        ,,Lebensdauer $> T$''.
+    \item[Typ-II-Zensierung (anzahlbasiert):] Der Test endet
+        nach dem $r$-ten Ausfall. Die Lebensdauern der
+        verbleibenden $n - r$ Prüflinge sind rechtszensiert.
+    \item[Zufällige Zensierung:] Prüflinge fallen zu
+        verschiedenen Zeitpunkten aus dem Test (z.\,B.\ durch
+        Bruch, Verlust). Häufigster Fall in der Praxis.
+\end{description}
+
+\subsection{Auswirkung auf Toleranzintervalle}
+
+Zensierte Daten erfordern Anpassungen aller Verfahren:
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{Verteilungsfrei}: Nicht direkt anwendbar,
+          da $x_{(n)}$ nicht beobachtet wird
+    \item \textbf{Normal/Lognormal}: $\xbar$ und $s$ müssen
+          durch zensierungsbereinigte Schätzer ersetzt werden
+          (z.\,B.\ Kaplan-Meier für den Median)
+    \item \textbf{Weibull}: Die MLE-Likelihood muss um
+          Zensierungsterme erweitert werden:
+\end{itemize}
+
+\begin{equation}
+    \ell(c, \lambda) = \sum_{i \in \mathcal{F}} \ln f(t_i)
+    + \sum_{i \in \mathcal{C}} \ln S(t_i)
+    \label{eq:censored_lik}
+\end{equation}
+
+wobei $\mathcal{F}$ die Menge der beobachteten Ausfälle,
+$\mathcal{C}$ die Menge der zensierten Beobachtungen und
+$S(t) = 1 - F(t)$ die Überlebensfunktion ist.
+
+Für Weibull ergibt sich konkret:
+\begin{equation}
+    S(t) = \exp\!\left[-\left(\frac{t}{\lambda}\right)^c\right]
+\end{equation}
+
+\hinweis{Die aktuelle Implementierung unterstützt noch keine
+zensierten Daten. Für diesen Anwendungsfall empfiehlt sich die
+Python-Bibliothek \texttt{lifelines} oder \texttt{reliability},
+die zensierungsbereinigte MLE und Bootstrap implementieren.}
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Fehlerquellen und häufige Missverständnisse}
+\label{sec:fehler}
+% ══════════════════════════════════════════════════════════════
+
+\subsection{Verwechslung von Konfidenz und Abdeckung}
+
+Ein 95/95-TI wird gelegentlich als ,,95\%-Intervall''
+abgekürzt -- aber \emph{welche} 95\%? Es ist essenziell,
+beide Parameter anzugeben. Ein 99/50-TI (99\% Abdeckung,
+50\% Konfidenz) ist eine völlig andere Aussage als ein
+50/99-TI (50\% Abdeckung, 99\% Konfidenz).
+
+\subsection{Normalitätsannahme bei kleinem $n$}
+
+Bei $n = 10$ hat der Shapiro-Wilk-Test eine Macht von
+typischerweise 30--50\% gegen moderate Abweichungen von der
+Normalverteilung. Das bedeutet: Selbst wenn die Daten
+\emph{nicht} normalverteilt sind, wird $H_0$ in mehr als
+der Hälfte der Fälle \emph{nicht} abgelehnt. Der Test
+,,bestätigt'' also nicht die Normalität -- er kann sie nur
+bei starken Abweichungen ablehnen.
+
+Konsequenz: Bei kleinem $n$ sollte domänenspezifisches
+Wissen über die Verteilung einfließen, nicht blind dem
+Testergebnis vertraut werden.
+
+\subsection{Multiple Testproblematik}
+
+Der Entscheidungsalgorithmus testet sequenziell auf Normal-,
+Lognormal- und Weibull-Verteilung. Jeder Test hat eine
+Fehlerwahrscheinlichkeit $\alpha_s$. Die Gesamtwahrscheinlichkeit,
+mindestens eine falsche Akzeptanz zu produzieren, ist
+\emph{nicht} $\alpha_s$, sondern kann bis zu
+$1 - (1-\alpha_s)^3 \approx 0.143$ für $\alpha_s = 0.05$ betragen.
+
+In der Praxis ist dies kein gravierendes Problem, weil die
+Tests sequenziell (nicht parallel) durchgeführt werden und
+bei der ersten Akzeptanz abgebrochen wird. Die Prioritätsreihenfolge
+(Normal vor Lognormal vor Weibull) stellt sicher, dass das
+einfachste passende Modell gewählt wird.
+
+
+% ══════════════════════════════════════════════════════════════
+\section{Referenzen und weiterführende Literatur}
+\label{sec:referenzen}
+% ══════════════════════════════════════════════════════════════
+
+\begin{enumerate}[nosep,leftmargin=*,label={[\arabic*]}]
+    \item \textsc{Meeker}, W.\,Q., \textsc{Hahn}, G.\,J. und
+          \textsc{Escobar}, L.\,A.:
+          \emph{Statistical Intervals: A Guide for Practitioners
+          and Researchers}. 2.~Aufl., Wiley, 2017.
+
+    \item \textsc{Howe}, W.\,G.:
+          Two-sided tolerance limits for normal populations --
+          some improvements.
+          \emph{J.\ Amer.\ Statist.\ Assoc.}, 64:610--620, 1969.
+
+    \item ISO~16269-6:2014:
+          \emph{Statistical interpretation of data -- Part~6:
+          Determination of statistical tolerance intervals}.
+
+    \item \textsc{Shapiro}, S.\,S. und \textsc{Wilk}, M.\,B.:
+          An analysis of variance test for normality.
+          \emph{Biometrika}, 52(3/4):591--611, 1965.
+
+    \item \textsc{Guenther}, W.\,C.:
+          Tolerance intervals for univariate distributions.
+          \emph{Naval Res.\ Logist.\ Quart.}, 19(2):309--333, 1972.
+
+    \item \textsc{Krishnamoorthy}, K. und \textsc{Mathew}, T.:
+          \emph{Statistical Tolerance Regions: Theory, Applications,
+          and Computation}. Wiley, 2009.
+
+    \item \textsc{Lawless}, J.\,F.:
+          \emph{Statistical Models and Methods for Lifetime Data}.
+          2.~Aufl., Wiley, 2003.
+
+    \item NIST/SEMATECH e-Handbook of Statistical Methods:
+          \emph{Tolerance Intervals}.
+          \url{https://www.itl.nist.gov/div898/handbook/prc/section2/prc263.htm}
+
+    \item \textsc{Wilks}, S.\,S.:
+          Determination of sample sizes for setting tolerance limits.
+          \emph{Ann.\ Math.\ Statist.}, 12(1):91--96, 1941.
+\end{enumerate}
+
+\vfill
+
+\begin{center}
+\small\textit{Dokument erstellt im Februar 2026.\\
+Implementierung in Python 3.12+ mit NumPy, SciPy und PySide6.}
+\end{center}
+
+\newpage
+
+% ══════════════════════════════════════════════════════════════
+\appendix
+\section{Formelsammlung}
+\label{app:formeln}
+% ══════════════════════════════════════════════════════════════
+
+Zum schnellen Nachschlagen -- alle zentralen Formeln auf einen
+Blick.
+
+\subsection{Verteilungsfreies TI}
+
+\textbf{Allgemein} ($\ell, u$ beliebig):
+\begin{align}
+    &\text{Konfidenz:} \quad \mathrm{CPTI} = F_{\mathrm{Binom}}(d-1;\, n,\, p) \\
+    &\text{wobei } d = u - \ell \text{ (Span)}
+\end{align}
+
+\textbf{Optimiert} (Satz~\ref{satz:opt_df}):
+\begin{align}
+    &d^* = \min\{d : F_{\mathrm{Binom}}(d-1;\, n,\, p) \geq 1-\alpha\} \\
+    &\ell^* = \arg\min_\ell \big(x_{(\ell+d^*)} - x_{(\ell)}\big) \\
+    &\text{Intervall:} \quad [x_{(\ell^*)},\; x_{(\ell^*+d^*)}]
+\end{align}
+
+\textbf{Spezialfall} ($\ell=1, u=n$):
+\begin{align}
+    &\text{Konfidenz:} \quad C = 1 - np^{n-1} + (n-1)p^n \\
+    &\text{Min.\ } n: \quad 1 - np^{n-1} + (n-1)p^n \geq 1 - \alpha
+\end{align}
+
+\textbf{Einseitig:}
+\begin{align}
+    &\text{Konfidenz:} \quad C = 1 - p^n \\
+    &\text{Min.\ } n: \quad n \geq \frac{\ln\alpha}{\ln p}
+\end{align}
+
+\subsection{Normal-TI}
+
+\textbf{Zweiseitig:}
+\begin{align}
+    &\text{Intervall:} \quad [\xbar - ks,\; \xbar + ks] \\
+    &k = z_{(1+p)/2} \cdot
+    \sqrt{\frac{(n-1)(1+1/n)}{\chi^2_{1-\alpha,\,n-1}}}
+\end{align}
+
+\textbf{Einseitig:}
+\begin{align}
+    &\text{Intervall:} \quad (-\infty,\; \xbar + ks] \\
+    &k = \frac{t_{n-1,\,1-\alpha,\,z_p\sqrt{n}}}{\sqrt{n}}
+\end{align}
+
+\subsection{Lognormal-TI}
+
+Setze $y_i = \ln x_i$, berechne $\bar{y}$ und $s_y$:
+\begin{equation}
+    \Big[\exp(\bar{y} - k \cdot s_y),\;\;
+          \exp(\bar{y} + k \cdot s_y)\Big]
+\end{equation}
+mit $k$ wie im Normalfall.
+
+\subsection{Weibull-TI}
+
+Weibull-Dichte und Quantilfunktion:
+\begin{align}
+    f(x) &= \frac{c}{\lambda}
+    \left(\frac{x}{\lambda}\right)^{\!c-1}
+    \exp\!\left[-\left(\frac{x}{\lambda}\right)^{\!c}\right] \\[4pt]
+    F^{-1}(q) &= \lambda\,\big(-\ln(1-q)\big)^{1/c}
+\end{align}
+
+Bootstrap-Konfidenzgrenzen ($B$ Replikationen):
+\begin{align}
+    L &= Q_{\alpha/2}\!\left(\big\{
+        F^{-1}\!\big(\tfrac{1-p}{2};\, \hat{c}^{(b)}, \hat{\lambda}^{(b)}\big)
+    \big\}_{b=1}^B\right) \\
+    U &= Q_{1-\alpha/2}\!\left(\big\{
+        F^{-1}\!\big(\tfrac{1+p}{2};\, \hat{c}^{(b)}, \hat{\lambda}^{(b)}\big)
+    \big\}_{b=1}^B\right)
+\end{align}
+
+\subsection{Shapiro-Wilk-Teststatistik}
+
+\begin{equation}
+    W = \frac{\left(\sum_{i=1}^n a_i\, x_{(i)}\right)^2}
+    {\sum_{i=1}^n (x_i - \xbar)^2}
+    \quad\text{mit}\quad
+    \mathbf{a} = \frac{\mathbf{V}^{-1}\mathbf{m}}
+    {\|\mathbf{V}^{-1}\mathbf{m}\|}
+\end{equation}
+
+\subsection{KS-Teststatistik (Weibull-GoF)}
+
+\begin{equation}
+    D_n = \sup_x \big|F_n(x) - F(x;\hat{c},\hat{\lambda})\big|
+\end{equation}
+
+Monte-Carlo-$p$-Wert ($N_{\text{MC}}$ Replikationen):
+\begin{equation}
+    p_{\text{MC}} = \frac{1}{N_{\text{MC}}}
+    \sum_{j=1}^{N_{\text{MC}}} \mathbf{1}\big[D_n^{(j)} \geq D_n\big]
+\end{equation}
+
+\subsection{Prozessfähigkeit}
+
+\begin{align}
+    C_p &= \frac{\text{USL} - \text{LSL}}{6\sigma} \\[4pt]
+    C_{pk} &= \min\!\left(
+        \frac{\text{USL} - \mu}{3\sigma},\;
+        \frac{\mu - \text{LSL}}{3\sigma}
+    \right)
+\end{align}
+
+TI-basierte Spezifikationsprüfung:
+\begin{equation}
+    \text{LSL} \leq \xbar - ks
+    \quad\text{und}\quad
+    \xbar + ks \leq \text{USL}
+\end{equation}
+
+% ══════════════════════════════════════════════════════════════
+\end{document}
+% ══════════════════════════════════════════════════════════════
