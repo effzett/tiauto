@@ -33,7 +33,7 @@ from src.tolerance_intervals import (
 class ToleranceIntervalApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Toleranzintervall-Rechner v1.1.0")
+        self.setWindowTitle("Toleranzintervall-Rechner v1.1")
         self.setMinimumSize(900, 700)
         self.setup_ui()
         self.setup_menu()
@@ -182,6 +182,25 @@ class ToleranceIntervalApp(QMainWindow):
         param_layout.addWidget(self.alpha_spin, row, 1)
 
         row += 1
+        param_layout.addWidget(QLabel("Methode:"), row, 0)
+        self.method_combo = QComboBox()
+        self.method_combo.addItems([
+            "Automatisch",
+            "Verteilungsfrei",
+            "Normal (k-Faktor)",
+            "Lognormal",
+            "Weibull (Bootstrap)",
+        ])
+        self.method_combo.setToolTip(
+            "Automatisch: Beste Methode wird gewählt\n"
+            "Verteilungsfrei: Ordnungsstatistiken (braucht viele Daten)\n"
+            "Normal: k-Faktor-Methode\n"
+            "Lognormal: k-Faktor auf log-Skala\n"
+            "Weibull: Parametrischer Bootstrap"
+        )
+        param_layout.addWidget(self.method_combo, row, 1)
+
+        row += 1
         param_layout.addWidget(QLabel(""), row, 0)  # Spacer
 
         # Min-n Anzeige
@@ -196,6 +215,7 @@ class ToleranceIntervalApp(QMainWindow):
         self.p_spin.valueChanged.connect(self.update_min_n_label)
         self.conf_spin.valueChanged.connect(self.update_min_n_label)
         self.side_combo.currentIndexChanged.connect(self.update_min_n_label)
+        self.method_combo.currentIndexChanged.connect(self.update_min_n_label)
 
         row += 1
         param_layout.setRowStretch(row, 1)
@@ -258,18 +278,40 @@ class ToleranceIntervalApp(QMainWindow):
         idx = self.side_combo.currentIndex()
         return ['two-sided', 'lower', 'upper'][idx]
 
+    def get_method_string(self) -> str:
+        idx = self.method_combo.currentIndex()
+        return ['auto', 'distribution_free', 'normal',
+                'lognormal', 'weibull'][idx]
+
     def update_min_n_label(self):
         p = self.p_spin.value()
         conf = self.conf_spin.value()
         side = self.get_side_string()
+        method = self.get_method_string()
+
+        # Shapiro-α nur bei automatischer Wahl relevant
+        self.alpha_spin.setEnabled(method == 'auto')
+
         try:
             min_n = min_n_distribution_free(p, conf, side)
             side_text = "zweiseitig" if side == 'two-sided' else "einseitig"
-            self.min_n_label.setText(
-                f"ℹ Verteilungsfrei (Fallback)\n"
-                f"  benötigt min. n = {min_n} ({side_text})\n"
-                f"  für p={p:.3f}, conf={conf:.3f}"
-            )
+            if method == 'auto':
+                self.min_n_label.setText(
+                    f"ℹ Verteilungsfrei (Schritt 4)\n"
+                    f"  benötigt min. n = {min_n} ({side_text})\n"
+                    f"  für p={p:.3f}, conf={conf:.3f}"
+                )
+            elif method == 'distribution_free':
+                self.min_n_label.setText(
+                    f"⚠ Verteilungsfrei erzwungen\n"
+                    f"  Benötigt min. n = {min_n} ({side_text})\n"
+                    f"  für p={p:.3f}, conf={conf:.3f}"
+                )
+            else:
+                self.min_n_label.setText(
+                    f"ℹ Methode erzwungen: {method}\n"
+                    f"  Kein Verteilungstest, kein min-n nötig."
+                )
         except Exception:
             self.min_n_label.setText("")
 
@@ -321,6 +363,7 @@ class ToleranceIntervalApp(QMainWindow):
         conf = self.conf_spin.value()
         side = self.get_side_string()
         alpha = self.alpha_spin.value()
+        method = self.get_method_string()
 
         # Ergebnis berechnen, verbose-Output abfangen
         buf = io.StringIO()
@@ -330,7 +373,7 @@ class ToleranceIntervalApp(QMainWindow):
         try:
             result = auto_tolerance_interval(
                 data, p=p, confidence=conf, side=side,
-                alpha_shapiro=alpha, verbose=True,
+                method=method, alpha_shapiro=alpha, verbose=True,
             )
         except Exception as e:
             sys.stdout = old_stdout

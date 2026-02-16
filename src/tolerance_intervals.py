@@ -480,13 +480,14 @@ def auto_tolerance_interval(
     p: float = 0.95,
     confidence: float = 0.95,
     side: str = 'two-sided',
+    method: str = 'auto',
     alpha_shapiro: float = 0.05,
     verbose: bool = True,
 ) -> ToleranceResult:
     """
     Automatische Berechnung eines Toleranzintervalls.
 
-    Entscheidungslogik (parametrisch zuerst):
+    Entscheidungslogik (parametrisch zuerst, bei method='auto'):
     1. Shapiro-Wilk p >= alpha auf Rohdaten? → Normal-TI
     2. Daten > 0 und Shapiro-Wilk p >= alpha auf log(Daten)? → Lognormal-TI
     3. Daten > 0 und Weibull-GoF p >= alpha? → Weibull-TI (Bootstrap)
@@ -510,6 +511,9 @@ def auto_tolerance_interval(
         Konfidenzniveau (z.B. 0.95 = 95%)
     side : str
         'two-sided', 'lower', oder 'upper'
+    method : str
+        'auto' (Standard), 'normal', 'lognormal', 'weibull',
+        oder 'distribution_free' für erzwungene Methodenwahl
     alpha_shapiro : float
         Signifikanzniveau für Shapiro-Wilk-Test (Standard: 0.05)
     verbose : bool
@@ -526,11 +530,52 @@ def auto_tolerance_interval(
     if n < 2:
         raise ValueError(f"Mindestens 2 Messwerte nötig, habe {n}.")
 
-    min_n = min_n_distribution_free(p, confidence, side)
-
     def log(msg):
         if verbose:
             print(f"  → {msg}")
+
+    # ── Erzwungene Methodenwahl ──
+    if method != 'auto':
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"Toleranzintervall-Berechnung (Methode: {method})")
+            print(f"  n={n}, p={p}, confidence={confidence}, side={side}")
+            print(f"{'='*60}")
+
+        if method == 'normal':
+            log("Erzwungen: Normal (k-Faktor)")
+            result = normal_ti(data, p, confidence, side)
+        elif method == 'lognormal':
+            if np.any(data <= 0):
+                raise ValueError("Lognormal erfordert strikt positive Daten.")
+            log("Erzwungen: Lognormal (k-Faktor auf log-Skala)")
+            result = lognormal_ti(data, p, confidence, side)
+        elif method == 'weibull':
+            if np.any(data <= 0):
+                raise ValueError("Weibull erfordert strikt positive Daten.")
+            log("Erzwungen: Weibull (parametrischer Bootstrap)")
+            result = weibull_ti(data, p, confidence, side)
+        elif method == 'distribution_free':
+            min_n = min_n_distribution_free(p, confidence, side)
+            if n < min_n:
+                raise ValueError(
+                    f"Verteilungsfrei benötigt mindestens n={min_n}, "
+                    f"vorhanden n={n}."
+                )
+            log("Erzwungen: Verteilungsfrei (Ordnungsstatistiken)")
+            result = distribution_free_ti(data, p, confidence, side)
+        else:
+            raise ValueError(
+                f"Unbekannte Methode '{method}'. "
+                f"Erlaubt: auto, normal, lognormal, weibull, distribution_free"
+            )
+
+        if verbose:
+            print(f"\n{result}")
+        return result
+
+    # ── Automatische Methodenwahl ──
+    min_n = min_n_distribution_free(p, confidence, side)
 
     if verbose:
         print(f"\n{'='*60}")
@@ -708,3 +753,8 @@ if __name__ == '__main__':
         28.28, 28.28, 29.07, 29.16, 31.14, 31.83, 33.24, 37.32, 53.43, 58.11,
     ]
     auto_tolerance_interval(messwerte, p=0.90, confidence=0.95, side='two-sided')
+
+    # Demo 10: Gleiche Meeker-Daten, aber erzwungen verteilungsfrei
+    print("\n\n" + "▶"*30 + " DEMO 10: Meeker 5.9 – erzwungen verteilungsfrei")
+    auto_tolerance_interval(messwerte, p=0.90, confidence=0.95,
+                        side='two-sided', method='distribution_free')

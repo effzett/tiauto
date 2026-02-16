@@ -192,5 +192,61 @@ class TestAutoDecision:
             auto_tolerance_interval([42], verbose=False)
 
 
+class TestForcedMethod:
+    """Erzwungene Methodenwahl."""
+
+    def test_force_distribution_free(self):
+        """Normalverteilte Daten, aber verteilungsfrei erzwungen."""
+        data = np.random.default_rng(42).normal(0, 1, size=100)
+        result = auto_tolerance_interval(data, method='distribution_free',
+                                         verbose=False)
+        assert 'Verteilungsfrei' in result.method
+
+    def test_force_normal(self):
+        data = np.random.default_rng(42).lognormal(3, 1.0, size=25)
+        result = auto_tolerance_interval(data, method='normal', verbose=False)
+        assert 'Normal' in result.method
+
+    def test_force_distribution_free_too_few_raises(self):
+        """Verteilungsfrei erzwungen, aber n zu klein → ValueError."""
+        data = np.random.default_rng(42).normal(0, 1, size=10)
+        with pytest.raises(ValueError, match="mindestens"):
+            auto_tolerance_interval(data, method='distribution_free',
+                                    verbose=False)
+
+    def test_force_lognormal_negative_raises(self):
+        with pytest.raises(ValueError, match="positive"):
+            auto_tolerance_interval([-1, 2, 3, 4, 5], method='lognormal',
+                                    verbose=False)
+
+    def test_force_unknown_raises(self):
+        with pytest.raises(ValueError, match="Unbekannte"):
+            auto_tolerance_interval([1, 2, 3], method='magic', verbose=False)
+
+    def test_meeker_data_distribution_free(self):
+        """Meeker-Daten: erzwungen verteilungsfrei → gleiche Ergebnisse."""
+        meeker_data = [
+            1.49, 1.66, 2.05, 2.24, 2.29, 2.69, 2.77, 2.77, 3.10, 3.23,
+            3.28, 3.29, 3.31, 3.36, 3.84, 4.04, 4.09, 4.13, 4.14, 4.16,
+            4.57, 4.63, 4.83, 5.06, 5.17, 5.19, 5.89, 5.97, 6.28, 6.38,
+            6.51, 6.53, 6.54, 6.55, 6.83, 7.08, 7.28, 7.53, 7.54, 7.68,
+            7.81, 7.87, 7.94, 8.43, 8.70, 8.97, 8.98, 9.13, 9.14, 9.22,
+            9.24, 9.30, 9.44, 9.69, 9.86, 9.99, 11.28, 11.37, 12.03, 12.32,
+            12.93, 13.03, 13.09, 13.43, 13.58, 13.70, 14.17, 14.36, 14.96, 15.89,
+            16.57, 16.60, 16.85, 17.18, 17.46, 17.74, 18.40, 18.78, 19.84, 20.45,
+            20.89, 22.28, 22.48, 23.66, 24.33, 24.72, 25.46, 25.67, 25.77, 26.64,
+            28.28, 28.28, 29.07, 29.16, 31.14, 31.83, 33.24, 37.32, 53.43, 58.11,
+        ]
+        result = auto_tolerance_interval(
+            meeker_data, p=0.90, confidence=0.95,
+            method='distribution_free', verbose=False,
+        )
+        assert 'Verteilungsfrei' in result.method
+        assert abs(result.confidence - 0.9763) < 0.001
+        meeker_width = 37.32 - 1.66
+        our_width = result.upper - result.lower
+        assert our_width <= meeker_width + 0.01
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
