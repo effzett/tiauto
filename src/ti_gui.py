@@ -33,7 +33,7 @@ from src.tolerance_intervals import (
 class ToleranceIntervalApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Toleranzintervall-Rechner v1.1")
+        self.setWindowTitle("Toleranzintervall-Rechner v1.2.0")
         self.setMinimumSize(900, 700)
         self.setup_ui()
         self.setup_menu()
