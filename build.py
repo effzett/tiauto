@@ -123,6 +123,7 @@ def build():
         '--hidden-import', 'scipy.special._cdflib',
         '--hidden-import', 'scipy.stats',
         '--hidden-import', 'numpy',
+        '--hidden-import', 'reportlab',
         # src-Paket mitliefern
         '--add-data', f'src{sep}src',
         # Dokumentation (PDF) mitliefern

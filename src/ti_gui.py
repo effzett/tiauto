@@ -13,6 +13,7 @@ import io
 import csv
 import numpy as np
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -33,7 +34,7 @@ from src.tolerance_intervals import (
 class ToleranceIntervalApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Toleranzintervall-Rechner v1.2.0")
+        self.setWindowTitle("Toleranzintervall-Rechner v1.3.0")
         self.setMinimumSize(900, 700)
         self.setup_ui()
         self.setup_menu()
@@ -51,10 +52,22 @@ class ToleranceIntervalApp(QMainWindow):
         open_action.triggered.connect(self.load_csv)
         file_menu.addAction(open_action)
 
+        save_action = QAction("Daten &speichern...", self)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_action.triggered.connect(self.save_data)
+        file_menu.addAction(save_action)
+
         paste_action = QAction("Aus &Zwischenablage einfügen", self)
         paste_action.setShortcut(QKeySequence("Ctrl+V"))
         paste_action.triggered.connect(self.paste_clipboard)
         file_menu.addAction(paste_action)
+
+        file_menu.addSeparator()
+
+        report_action = QAction("&Report erstellen...", self)
+        report_action.setShortcut(QKeySequence("Ctrl+R"))
+        report_action.triggered.connect(self.generate_report)
+        file_menu.addAction(report_action)
 
         file_menu.addSeparator()
 
@@ -122,6 +135,10 @@ class ToleranceIntervalApp(QMainWindow):
         load_btn = QPushButton("CSV laden...")
         load_btn.clicked.connect(self.load_csv)
         btn_row.addWidget(load_btn)
+
+        save_btn = QPushButton("Daten speichern...")
+        save_btn.clicked.connect(self.save_data)
+        btn_row.addWidget(save_btn)
 
         clear_btn = QPushButton("Leeren")
         clear_btn.clicked.connect(self.data_input.clear)
@@ -268,6 +285,30 @@ class ToleranceIntervalApp(QMainWindow):
         result_tabs.addTab(self.stats_text, "Deskriptive Statistik")
 
         result_layout.addWidget(result_tabs)
+
+        # Report-Button
+        report_row = QHBoxLayout()
+        report_row.addStretch()
+        self.report_btn = QPushButton("📄  Report als PDF speichern...")
+        self.report_btn.setMinimumHeight(32)
+        self.report_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #059669;
+                color: white;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+                border: none;
+                padding: 4px 16px;
+            }
+            QPushButton:hover { background-color: #047857; }
+            QPushButton:pressed { background-color: #065f46; }
+        """)
+        self.report_btn.clicked.connect(self.generate_report)
+        report_row.addWidget(self.report_btn)
+        report_row.addStretch()
+        result_layout.addLayout(report_row)
+
         splitter.addWidget(result_widget)
 
         splitter.setSizes([350, 350])
@@ -457,6 +498,255 @@ class ToleranceIntervalApp(QMainWindow):
         example = "50.3\n48.3\n49.6\n50.4\n51.9"
         self.data_input.setPlainText(example)
         self.statusBar().showMessage("Beispieldaten geladen.", 3000)
+
+    def save_data(self):
+        """Speichert die aktuellen Daten aus der Eingabebox als CSV."""
+        try:
+            data = self.parse_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Keine Daten", str(e))
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Daten speichern", "messwerte.csv",
+            "CSV-Dateien (*.csv);;Text-Dateien (*.txt);;Alle Dateien (*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(['Messwert'])
+                for val in data:
+                    writer.writerow([f'{val:g}'])
+            self.statusBar().showMessage(
+                f"Gespeichert: {len(data)} Werte → {path}", 5000
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Fehler beim Speichern", str(e))
+
+    def generate_report(self):
+        """Erzeugt einen PDF-Report mit Ergebnissen und deskriptiver Statistik."""
+        # Prüfe ob Daten und Ergebnisse vorhanden
+        result_text = self.result_text.toPlainText().strip()
+        stats_text = self.stats_text.toPlainText().strip()
+
+        if not result_text:
+            QMessageBox.information(
+                self, "Kein Ergebnis",
+                "Bitte zuerst Berechnung durchführen."
+            )
+            return
+
+        try:
+            data = self.parse_data()
+        except ValueError as e:
+            QMessageBox.warning(self, "Keine Daten", str(e))
+            return
+
+        # Rohdaten optional?
+        include_raw = QMessageBox.question(
+            self, "Rohdaten einschließen?",
+            "Sollen die Rohdaten (sortiert) im Report enthalten sein?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        ) == QMessageBox.Yes
+
+        # Speicherort
+        default_name = f"TI_Report_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Report speichern", default_name,
+            "PDF-Dateien (*.pdf);;Alle Dateien (*)"
+        )
+        if not path:
+            return
+
+        try:
+            self._write_pdf_report(path, data, result_text, stats_text,
+                                   include_raw)
+            self.statusBar().showMessage(f"Report gespeichert: {path}", 5000)
+            # Direkt öffnen
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(path).resolve())))
+        except ImportError:
+            # reportlab nicht verfügbar → Fallback auf Text
+            self._write_text_report(path, data, result_text, stats_text,
+                                    include_raw)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler beim Report", str(e))
+
+    def _write_pdf_report(self, path, data, result_text, stats_text,
+                          include_raw):
+        """Schreibt den Report als PDF (benötigt reportlab)."""
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.lib.colors import HexColor
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Preformatted,
+            HRFlowable, Table, TableStyle, PageBreak,
+        )
+        from reportlab.lib import colors
+
+        doc = SimpleDocTemplate(
+            path, pagesize=A4,
+            topMargin=18*mm, bottomMargin=15*mm,
+            leftMargin=20*mm, rightMargin=20*mm,
+        )
+
+        styles = getSampleStyleSheet()
+        sap_blue = HexColor("#1B6FB5")
+        sap_dark = HexColor("#1A3E5C")
+        sap_light = HexColor("#EDF4FA")
+
+        styles.add(ParagraphStyle('RTitle', parent=styles['Title'],
+                                  fontSize=18, leading=22, textColor=sap_dark,
+                                  spaceAfter=2*mm, alignment=TA_CENTER))
+        styles.add(ParagraphStyle('RSub', parent=styles['Normal'],
+                                  fontSize=10, leading=13,
+                                  textColor=HexColor("#666666"),
+                                  spaceAfter=4*mm, alignment=TA_CENTER))
+        styles.add(ParagraphStyle('RSect', parent=styles['Heading2'],
+                                  fontSize=13, leading=16, textColor=sap_blue,
+                                  spaceBefore=5*mm, spaceAfter=2*mm))
+        styles.add(ParagraphStyle('RBody', parent=styles['Normal'],
+                                  fontSize=9.5, leading=12.5,
+                                  alignment=TA_JUSTIFY, spaceAfter=2*mm))
+        styles.add(ParagraphStyle('RMono', parent=styles['Normal'],
+                                  fontName='Courier', fontSize=8,
+                                  leading=10.5, spaceAfter=1*mm,
+                                  leftIndent=4*mm))
+        styles.add(ParagraphStyle('RFooter', parent=styles['Normal'],
+                                  fontSize=7.5, textColor=HexColor("#999999"),
+                                  alignment=TA_CENTER))
+
+        story = []
+
+        # ── Titel ──
+        story.append(Paragraph("Toleranzintervall – Report", styles['RTitle']))
+        p_val = self.p_spin.value()
+        conf_val = self.conf_spin.value()
+        side_text = self.side_combo.currentText()
+        method_text = self.method_combo.currentText()
+        story.append(Paragraph(
+            f"Erstellt: {datetime.now():%d.%m.%Y %H:%M} · "
+            f"n={len(data)} · p={p_val:.3f} · Konfidenz={conf_val:.3f} · "
+            f"{side_text} · Methode: {method_text}",
+            styles['RSub']
+        ))
+        story.append(HRFlowable(width="100%", thickness=1.2, color=sap_blue,
+                                spaceAfter=4*mm))
+
+        # ── Ergebnis ──
+        story.append(Paragraph("Ergebnis und Entscheidungslog", styles['RSect']))
+        for line in result_text.split('\n'):
+            story.append(Paragraph(line.replace(' ', '&nbsp;'),
+                                   styles['RMono']))
+
+        # ── Deskriptive Statistik ──
+        story.append(Paragraph("Deskriptive Statistik", styles['RSect']))
+
+        n = len(data)
+        mean = np.mean(data)
+        std = np.std(data, ddof=1)
+        q1, med, q3 = np.percentile(data, [25, 50, 75])
+        cv = std / mean * 100 if mean != 0 else float('nan')
+
+        stat_data = [
+            ['Kenngröße', 'Wert'],
+            ['Anzahl (n)', f'{n}'],
+            ['Minimum', f'{np.min(data):.6g}'],
+            ['Maximum', f'{np.max(data):.6g}'],
+            ['Spannweite', f'{np.ptp(data):.6g}'],
+            ['Mittelwert', f'{mean:.6g}'],
+            ['Median', f'{med:.6g}'],
+            ['Std.abw. (n−1)', f'{std:.6g}'],
+            ['Variationskoeff.', f'{cv:.2f}%'],
+            ['Q1 (25%)', f'{q1:.6g}'],
+            ['Q3 (75%)', f'{q3:.6g}'],
+            ['IQR', f'{q3 - q1:.6g}'],
+        ]
+
+        t = Table(stat_data, colWidths=[55*mm, 50*mm])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), sap_blue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1),
+             [colors.white, sap_light]),
+            ('GRID', (0, 0), (-1, -1), 0.4, HexColor("#CCCCCC")),
+        ]))
+        story.append(t)
+
+        # ── Rohdaten (optional) ──
+        if include_raw:
+            story.append(Paragraph("Rohdaten (sortiert)", styles['RSect']))
+            sorted_data = np.sort(data)
+
+            # Als Tabelle mit mehreren Spalten
+            cols = 8
+            rows_needed = int(np.ceil(len(sorted_data) / cols))
+            raw_table = [['#', 'Wert'] * min(cols, 4)]  # Header
+
+            # Einfacher: kompakte Textdarstellung
+            per_line = 10
+            for i in range(0, len(sorted_data), per_line):
+                chunk = sorted_data[i:i + per_line]
+                idx_str = f'[{i+1:>3}–{min(i+per_line, len(sorted_data)):>3}]'
+                vals = '  '.join(f'{v:.6g}' for v in chunk)
+                story.append(Paragraph(
+                    f'{idx_str}&nbsp; {vals}', styles['RMono']
+                ))
+
+        # ── Footer ──
+        story.append(Spacer(1, 8*mm))
+        story.append(HRFlowable(width="100%", thickness=0.4,
+                                color=HexColor("#CCCCCC"), spaceAfter=2*mm))
+        story.append(Paragraph(
+            f"Toleranzintervall-Rechner · {datetime.now():%d.%m.%Y %H:%M}",
+            styles['RFooter']
+        ))
+
+        doc.build(story)
+
+    def _write_text_report(self, path, data, result_text, stats_text,
+                           include_raw):
+        """Fallback: Report als Textdatei (wenn reportlab fehlt)."""
+        path = Path(path).with_suffix('.txt')
+        lines = [
+            "=" * 60,
+            "Toleranzintervall – Report",
+            f"Erstellt: {datetime.now():%d.%m.%Y %H:%M}",
+            "=" * 60,
+            "",
+            "ERGEBNIS UND ENTSCHEIDUNGSLOG",
+            "-" * 40,
+            result_text,
+            "",
+            "DESKRIPTIVE STATISTIK",
+            "-" * 40,
+            stats_text,
+        ]
+        if include_raw:
+            lines += [
+                "",
+                "ROHDATEN (sortiert)",
+                "-" * 40,
+            ]
+            sorted_data = np.sort(data)
+            for i, v in enumerate(sorted_data, 1):
+                lines.append(f"  {i:>4d}:  {v:.6g}")
+
+        path.write_text('\n'.join(lines), encoding='utf-8')
+        self.statusBar().showMessage(
+            f"Report als Text gespeichert (reportlab nicht verfügbar): {path}",
+            5000
+        )
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
 
     def open_documentation(self):
         """Öffnet das PDF-Paper im Standard-PDF-Viewer."""

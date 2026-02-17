@@ -1,0 +1,50 @@
+============================================================
+Toleranzintervall – Report
+Erstellt: 17.02.2026 18:45
+============================================================
+
+ERGEBNIS UND ENTSCHEIDUNGSLOG
+----------------------------------------
+============================================================
+Automatische Toleranzintervall-Berechnung
+  n=5, p=0.9, confidence=0.95, side=two-sided
+============================================================
+  → Shapiro-Wilk auf Rohdaten: W=0.9747, p=0.9044
+  → ✓ Normalverteilung nicht abgelehnt (p=0.9044 >= 0.05)
+
+Toleranzintervall (Normal (k-Faktor))
+  Intervall:   [44.502, 55.698]
+  Abdeckung:   90.0%
+  Konfidenz:   95.0%
+  n:           5
+  Details:     {'k_faktor': '4.2746', 'mittelwert': '50.1', 'std_abw': '1.30958', 'shapiro_wilk_p': '0.9044'}
+
+DESKRIPTIVE STATISTIK
+----------------------------------------
+Anzahl Messwerte:  5
+Minimum:           48.3
+Maximum:           51.9
+Spannweite:        3.6
+Mittelwert:        50.1
+Median:            50.3
+Std.abw. (n-1):    1.30958
+Variationskoeff.:  2.61%
+
+Quartile:
+  Q1 (25%):        49.6
+  Q2 (50%):        50.3
+  Q3 (75%):        50.4
+  IQR:             0.8
+
+Alle Werte positiv:  Ja
+
+Sortierte Daten:
+  48.3  49.6  50.3  50.4  51.9
+
+ROHDATEN (sortiert)
+----------------------------------------
+     1:  48.3
+     2:  49.6
+     3:  50.3
+     4:  50.4
+     5:  51.9
